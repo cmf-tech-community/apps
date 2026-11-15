@@ -5,7 +5,7 @@
 # The SDK and its tooling. To move to a newer one: change the commit here, `make sdk`, build and test every app,
 # open a PR. Packages built against it change, but a store update still needs each app's version raised.
 WP2_APPS_REV := 642db13a5744b289ef8f1a2d09651d0130bc890b
-WP2_APPS_GIT := https://github.com/cmf-tech-community/wp2-apps
+WP2_APPS_GIT := https://github.com/cmf-tech-community/cmf-watch-sdk
 SDK := .sdk/wp2-apps
 
 # Not vendored: cmf-watch-utils (AGPL; the emulator, its runtime/ and fixtures/, the stock firmware dump) and a

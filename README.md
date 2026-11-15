@@ -1,7 +1,7 @@
 # CMF Watch Pro 2 apps
 
 Community apps for the CMF Watch Pro 2, as listed in the [FMC store](https://fmc.freethinkel.dev/apps). Each app is a
-Rust crate under `apps/`, built with the [wp2-apps](https://github.com/cmf-tech-community/wp2-apps) SDK. Open a pull
+Rust crate under `apps/`, built with [cmf-watch-sdk](https://github.com/cmf-tech-community/cmf-watch-sdk). Open a pull
 request with yours; once it's merged, CI builds it and publishes it to the store.
 
 An app runs on a watch with the patched firmware and the App Loader, both on the store's
@@ -25,17 +25,17 @@ make sim APP=my-app         # run it in a window on your computer
 make build APP=my-app       # target/my-app.wp2app
 ```
 
-The first `make` fetches wp2-apps at the commit the Makefile pins into `.sdk/wp2-apps`: the SDK crates, the
+The first `make` fetches cmf-watch-sdk at the commit the Makefile pins into `.sdk/wp2-apps`: the SDK crates, the
 simulator and the packaging tools all come from there, so everyone builds the same bytes.
 
-Then write the app. [docs/app-guide.md](https://github.com/cmf-tech-community/wp2-apps/blob/main/docs/app-guide.md)
-in wp2-apps is the manual: the app model, the `Api` table, the stock look (`cmf_wp2_app::stock`), storage, the phone
+Then write the app. [docs/app-guide.md](https://github.com/cmf-tech-community/cmf-watch-sdk/blob/main/docs/app-guide.md)
+in cmf-watch-sdk is the manual: the app model, the `Api` table, the stock look (`cmf_wp2_app::stock`), storage, the phone
 channel, budgets. The apps here are worked examples of it.
 
 - The crate name is the package name and the store's key: 1–23 lowercase letters, digits, `-` and `_`. It can't
   change later.
 - `icon.svg` (96×96 viewBox) is the watch menu's icon and, rendered at 288 px, the store's. Images it references are
-  resolved next to it. Style: [docs/app-icons.md](https://github.com/cmf-tech-community/wp2-apps/blob/main/docs/app-icons.md).
+  resolved next to it. Style: [docs/app-icons.md](https://github.com/cmf-tech-community/cmf-watch-sdk/blob/main/docs/app-icons.md).
 - Use the system font and the stock look, not LVGL's defaults.
 
 ### In the emulator or on a watch
