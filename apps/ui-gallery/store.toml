@@ -1,6 +1,6 @@
 # The app's listing in the FMC store (README.md, "store.toml"). The page's body is store.md.
 name = "UI Gallery"
 summary = "The watch's own widgets, in the stock look"
-version = "0.1.1"
+version = "0.2.0"
 author = "CMF Tech Community"
 published = true
