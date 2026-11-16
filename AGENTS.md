@@ -11,7 +11,8 @@ is what an agent needs on top.
 
 - `.sdk/wp2-apps/docs/app-guide.md`: the manual (app model, `Api`, widget and page, stock look, storage, phone
   channel, budgets, the shipping checklist in section 7).
-- `.sdk/wp2-apps/docs/abi-1.4.md`: the channel key K, heart rate, pager, cards, stub version.
+- `.sdk/wp2-apps/docs/abi-1.4.md`: the channel key K, heart rate, pager, cards, stub version; horizontal pager,
+  phone music (`media_key`, `media_bind`) and the 5 s escape for `own_back` apps need the loader of 2026-11-16.
 - `apps/vibration-lab` (template, canvas), `apps/ui-gallery` (stock LVGL widgets), `apps/sky-hop` (a game): worked
   examples. More in `.sdk/wp2-apps/sdk/examples` (`hello` and `herdr-agents` have a widget and a page).
 
@@ -25,6 +26,8 @@ git -C .sdk/wp2-apps fetch --quiet origin && git -C .sdk/wp2-apps log --oneline 
 If a newer commit has it, say so and move the pin first (skill `sdk-update`).
 
 LVGL apps use the system font and the stock look (`cmf_wp2_app::stock`), never LVGL's defaults or an own palette.
+`app-guide.md`, "Stock components: SDK and ui-gallery", maps each stock component to its SDK call. Rollers: short and
+not infinite (infinite ones draw at 4-6 fps; same section).
 
 ## What an app can be
 
