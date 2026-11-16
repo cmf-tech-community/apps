@@ -1,0 +1,5 @@
+name = "2048"
+summary = "Move vertically with the crown and sideways with screen buttons"
+version = "0.4.0"
+author = "CMF Tech Community"
+published = false

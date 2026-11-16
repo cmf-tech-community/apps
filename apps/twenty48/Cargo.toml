@@ -1,0 +1,4 @@
+[package]
+name = "twenty48"
+version = "0.4.0"
+dependencies = ["cmf-wp2-app"]
