@@ -2,4 +2,4 @@ Turn the crown up or down to move vertically. Tap the large left and right butto
 
 ## Requirements
 
-The patched firmware and the App Loader. Open it from the **Apps** row at the end of the watch's app list (list style, not the waterfall).
+The [patched firmware](/firmware) and the [App Loader](/firmware). Open it from the **Apps** row at the end of the watch's app list (list style, not the waterfall).

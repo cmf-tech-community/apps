@@ -1,4 +1,12 @@
 [package]
 name = "twenty48"
-version = "0.4.0"
-dependencies = ["cmf-wp2-app"]
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+cmf-wp2-app.workspace = true
+
+[[bin]]
+name = "twenty48"
+bench = false
