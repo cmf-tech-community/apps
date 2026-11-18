@@ -39,7 +39,7 @@ One package can offer several of these; ask which the owner wants before buildin
 | Widget card | `app_features!(WIDGET)`; `api.widget(title, value)` stores text (23 B / 39 B, `\n` = 2nd line) the stub draws on a 344×166 card left of the face. A NAND write: on change, never per frame. A tap opens the app | 2026-11-15 |
 | Page | `app_features!(PAGE)`: the app is a whole screen next to the face. `api.on_page()` is `true` there; no `BUTTON` (the app never exits itself), swipe away = `PAUSE`, back = `RESUME` | 2026-11-15 |
 | Phone or Mac link | `send`/`recv`, `MESSAGE`: section "Apps that talk to a phone" below | 2026-11-13 for K |
-| Phone services | calendar and more from FMC Companion over `R1` messages. **Draft, not implemented**: "FMC Companion" below | — |
+| Phone services | calendar, location, weather, HTTP GET, notifications from FMC Companion over `R1` messages: "FMC Companion" below | 2026-11-13 for K |
 
 The user adds a widget or a page on the watch: long press on the app's row in Apps → "Add widget" / "Add page".
 Details: `app-guide.md`, "Widget" and "Page". A "full-screen widget" means a page.
@@ -101,25 +101,52 @@ it.
 ### FMC Companion
 
 The phone app for the watch and fmc.tools, MIT, iOS (SwiftUI) and Android (Compose):
-[fmctools/companion](https://github.com/fmctools/companion). What it does today: reads the App Loader state over K
-next to Nothing X, browses the FMC catalog, installs watch faces (Nothing X closed first), has a demo mode. It only
-reads the watch; it does not talk to apps yet.
+[fmctools/companion](https://github.com/fmctools/companion). It reads the App Loader state over K next to Nothing X,
+browses the FMC catalog, installs watch faces (Nothing X closed first), updates the App Loader, and answers watch
+apps' requests for phone services (below). Its Apps tab lists the apps on the watch with a switch per service each
+asked for.
 
-**Phone services for apps: a draft, not implemented, not released.** Don't build an app that depends on them, and
-don't tell anyone they work. The spec, and the only source of truth for byte layouts, is
-[`docs/miniapp-rpc.md`](https://github.com/fmctools/companion/blob/main/docs/miniapp-rpc.md) in the companion repo.
-In short:
+What a watch app can count on from the companion: [docs/companion.md](docs/companion.md). That covers the Apps tab,
+one BLE link with several sessions, iOS background limits (about 10 s per wake), why there are no web modules, and
+building your own companion.
 
-- The app declares the caps it uses (`uses`) in a manifest on its fmc.tools record; the user grants them at install.
-- RPC rides on app messages: every message starts with `R1`, then `Q` (request, watch → phone) or `A` (reply).
-  Other prefixes stay the app's own. The watch pulls; a closed app gets nothing.
-- Statuses: `OK`, `BAD_REQUEST`, `DENIED` (no grant or OS permission off), `UNAVAILABLE`. No answer: show the cached
-  copy, retry after 3 s.
+**Phone services.** The spec, and the only source of truth for byte layouts, is
+[`docs/miniapp-rpc.md`](https://github.com/fmctools/companion/blob/main/docs/miniapp-rpc.md) in the companion repo
+(`gh api repos/fmctools/companion/contents/docs/miniapp-rpc.md -H "Accept: application/vnd.github.raw"`); read it
+before writing an app that uses one. Its encodings are pinned by `ios/WireKit/Tests/WireKitTests/rpc-vectors.json`
+there. `apps/calendar` is the worked example (`src/rpc.rs`, `src/model.rs`: request, reply, cache, retry).
 
 | Method | Id | Cap | Returns |
 |---|---|---|---|
-| `caps` | `0x01` | none | the method ids this app may call now |
-| `calendar.events` | `0x10` | `calendar.read` | events for 1–7 days from today: day, start minute, duration, flags, colour, title |
+| `caps` | `0x01` | none | the method ids this app may call now: tells "allow on your phone" from an empty result |
+| `calendar.events` | `0x10` | `calendar` | events for 1-7 days from today (`limit` 1-20): day, start minute, duration, flags, RGB565 colour, title |
+| `location` | `0x20` | `location` | lat/lon in 0.1°, fix age, locality name |
+| `weather` | `0x30` | `weather` | now (0.1 °C, WMO code, wind, humidity) and up to 7 days (min/max, code, precip %) |
+| `http.get` | `0x40` | `http:<host>` | status, length and body (≤ 2048 B, in 121 B chunks) of an `https://` GET, URL ≤ 123 B |
+| `notifications` | `0x50` | `notifications` | the notifications shown now, newest first (≤ 10): age, app label, "title: text". Android only |
 
-Calendar titles are off by default (K is readable by anyone in range): the phone sends time, length and colour, and
-a per-app switch in the companion turns titles on. Locations, attendees and notes are never sent.
+Both apps implement all six. Only `calendar.events` is used by an app here and tried on a real watch; the rest have
+no watch app yet, so expect to find the first bugs.
+
+How it works and what it can't do:
+
+- RPC rides on app messages: every message starts with `R1`, then `Q` (request, watch → phone:
+  `R1Q id method args`) or `A` (reply: `R1A id status index total record`). Other prefixes stay the app's own. A
+  result of N records comes as N messages; empty or an error is one message with `total` 0.
+- The watch pulls: the phone answers the running app only, and nothing is pushed to a closed app. Replies carry no
+  link-level request id: one request at a time, ignore replies whose `id` is not your latest.
+- Statuses: 0 `OK`, 1 `BAD_REQUEST`, 2 `DENIED` (the user said no, or the OS permission is off), 3 `UNAVAILABLE`
+  (no fix, no network, timeout, notifications on iOS), 4 `ASK` (the phone asked the user; show "allow on your
+  phone"), 5 `TOO_LARGE` (`http.get`). No answer at all (phone asleep, out of range, companion not running, often on
+  iOS): show the cached copy from `store` and ask again after 3 s, then less often.
+- Limits: a message is 1-128 bytes, a record ≤ 121; 4 messages in the inbox, so drain `recv` every loop. The phone
+  answers within 8 s (iOS gives it about 10 s per wake). Text fields are UTF-8, ≤ 64 bytes; the watch font has ASCII
+  and Cyrillic only, anything else draws as `?`. Times are the phone's local day + minute, no zones.
+- Grants are per app package, asked on first use: the first call returns `ASK` and the phone posts a notification;
+  the user allows or denies on the app's page in the companion's Apps tab.
+- Read only. There is no method that writes to the phone: no creating events, no RSVP, no replying to
+  notifications, no POST. iOS couldn't RSVP anyway (EventKit can't set your attendee status). A new method is a
+  change to `miniapp-rpc.md` and both apps first.
+- Personal data: K is readable by anyone in BLE range. Calendar titles and notification text are off by default
+  (records come with flag bit 2 and an empty title; show "busy"); a per-app "Show text on the watch" switch turns
+  them on. Location is 0.1° only. Event locations, attendees and notes are never sent.

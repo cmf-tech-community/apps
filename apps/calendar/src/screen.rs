@@ -251,18 +251,56 @@ pub struct MonthView {
     pub title: Obj,
     pub prev: Obj,
     pub next: Obj,
+    pub foot: Obj,
     pub shown: Month,
+    /// The days, under the title: [`month_turn`] swaps it for another month's.
+    pub grid: Obj,
     /// The grid's cells, as `date::grid(shown)`: a tap on one opens its day.
     pub cells: [Obj; CELLS],
+}
+
+/// `shown`'s days in a hidden box over the grid area (the caller shows it), a cell per day.
+fn grid(b: &mut Batch, flush: &mut Flush, r: Obj, shown: Month, today: Option<Day>, k: &Marks)
+    -> Result<(Obj, [Obj; CELLS]), LvError> {
+    room(b, flush)?;
+    let g = b.create(Class::Obj, r)?;
+    b.size(g, 7 * COL_W, 6 * ROW_H)?;
+    bare(b, g)?;
+    b.flags(g, &[Flag::Hidden], &[Flag::Clickable])?;
+    b.align(g, Align::TopLeft, GRID_X as i16, GRID_Y as i16)?;
+    let mut cells = [ROOT; CELLS];
+    for (i, d) in date::grid(shown).iter().enumerate().take(CELLS) {
+        room(b, flush)?;
+        let (x, y) = ((i % 7) as i32 * COL_W + 2, (i / 7) as i32 * ROW_H + 2);
+        cells[i] = cell(b, g, *d, d.month != shown, today == Some(*d), k.get(*d), x, y)?;
+    }
+    Ok((g, cells))
+}
+
+fn month_title(shown: Month) -> Line {
+    let mut t = Line::new();
+    let _ = write!(t, "{} {}", shown.name(), shown.year);
+    t
+}
+
+/// Another month on the month screen without leaving it: the new grid is built hidden next to the old one, then one
+/// batch drops the old grid, shows the new one and renames the title, so the screen never goes black in between.
+pub fn month_turn(b: &mut Batch, flush: &mut Flush, v: MonthView, shown: Month, today: Option<Day>, k: &Marks)
+    -> Result<MonthView, LvError> {
+    let (g, cells) = grid(b, flush, v.root, shown, today, k)?;
+    flush(b)?;
+    b.text(v.title, month_title(shown).as_str())?;
+    b.text(v.foot, month_summary(today, k).as_str())?;
+    b.del(v.grid)?;
+    b.flags(g, &[], &[Flag::Hidden])?;
+    Ok(MonthView { shown, grid: g, cells, ..v })
 }
 
 pub fn month_view(b: &mut Batch, flush: &mut Flush, shown: Month, today: Option<Day>, k: &Marks)
     -> Result<MonthView, LvError> {
     room(b, flush)?;
     let r = root(b)?;
-    let mut t = Line::new();
-    let _ = write!(t, "{} {}", shown.name(), shown.year);
-    let title = label(b, r, t.as_str(), TITLE_W, 0, TITLE_Y)?;
+    let title = label(b, r, month_title(shown).as_str(), TITLE_W, 0, TITLE_Y)?;
     b.style(title, Prop::TextColor, 0, ACCENT)?;
     b.style(title, Prop::TextFont, 0, F24 as i32)?;
     b.flags(title, &[Flag::Clickable], &[])?;
@@ -278,18 +316,14 @@ pub fn month_view(b: &mut Batch, flush: &mut Flush, shown: Month, today: Option<
         b.text(l, w)?;
         b.align(l, Align::TopLeft, (GRID_X + i as i32 * COL_W) as i16, WEEKDAYS_Y)?;
     }
-    let mut cells = [ROOT; CELLS];
-    for (i, d) in date::grid(shown).iter().enumerate().take(CELLS) {
-        room(b, flush)?;
-        let (x, y) = (GRID_X + (i % 7) as i32 * COL_W + 2, GRID_Y + (i / 7) as i32 * ROW_H + 2);
-        cells[i] = cell(b, r, *d, d.month != shown, today == Some(*d), k.get(*d), x, y)?;
-    }
+    let (grid, cells) = grid(b, flush, r, shown, today, k)?;
+    b.flags(grid, &[], &[Flag::Hidden])?;
     room(b, flush)?;
     let foot = label(b, r, month_summary(today, k).as_str(), 300, 0, FOOTER_Y)?;
     b.style(foot, Prop::TextColor, 0, GREY)?;
     b.style(foot, Prop::TextFont, 0, F24 as i32)?;
     b.flags(r, &[], &[Flag::Hidden])?;
-    Ok(MonthView { root: r, title, prev, next, shown, cells })
+    Ok(MonthView { root: r, title, prev, next, foot, shown, grid, cells })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -302,9 +336,12 @@ pub struct WidgetView {
     pub sel: Day,
     /// `date::week(today)`: a tap lists that day.
     pub cells: [Obj; 7],
+    pub cards: Cards,
 }
 
 const EVENT_H: i32 = 96;
+/// One line of the 24 px font.
+const NAME_H: i32 = 30;
 const DAY_TOP: i32 = 110;
 // the page: the week under the title, the events under the week
 const W_WEEK_Y: i32 = GRID_Y;
@@ -322,6 +359,9 @@ pub fn span_text(e: &Event) -> Line {
     }
     out
 }
+
+/// Event cards, in their events' order: a tap opens that event.
+pub type Cards = [Obj; crate::model::MAX];
 
 /// A crown-scrolled root with the accent "wed 18 november" title (clickable).
 fn day_root(b: &mut Batch, day: Day) -> Result<(Obj, Obj), LvError> {
@@ -341,13 +381,19 @@ fn day_root(b: &mut Batch, day: Day) -> Result<(Obj, Obj), LvError> {
 /// A card per event from `top` down, with its calendar's colour, its time and its title ("busy" while the phone
 /// keeps titles); `empty` when there are none. Then the scroll bar, and the root shown.
 fn event_cards<'e>(b: &mut Batch, flush: &mut Flush, r: Obj, top: i32, events: impl Iterator<Item = &'e Event>,
-    empty: &str) -> Result<(), LvError> {
+    empty: &str) -> Result<Cards, LvError> {
+    let mut cards = [ROOT; crate::model::MAX];
     let mut n = 0;
-    for e in events {
+    for e in events.take(cards.len()) {
         room(b, flush)?;
         let c = stock::card(b, r, EVENT_H)?;
-        b.align(c, Align::TopMid, 0, (top + n * (EVENT_H + stock::ROW_GAP)) as i16)?;
+        b.align(c, Align::TopMid, 0, (top + n as i32 * (EVENT_H + stock::ROW_GAP)) as i16)?;
+        // a tap opens the event, its whole title
+        b.events(c, &[Ev::Clicked])?;
+        b.style(c, Prop::BgColor, stock::PRESSED, stock::ROW_PRESSED)?;
+        cards[n] = c;
         let bar = b.create(Class::Obj, c)?;
+        b.flags(bar, &[], &[Flag::Clickable])?; // a press goes to the card
         b.size(bar, 8, EVENT_H - 40)?;
         b.style(bar, Prop::Radius, 0, CIRCLE)?;
         b.style(bar, Prop::BorderWidth, 0, 0)?;
@@ -358,7 +404,8 @@ fn event_cards<'e>(b: &mut Batch, flush: &mut Flush, r: Obj, top: i32, events: i
         b.text(time, span_text(e).as_str())?;
         b.align(time, Align::TopLeft, 68, 10)?;
         let name = b.create(Class::Label, c)?;
-        b.size(name, stock::ROW_W - 68 - 48, CONTENT)?;
+        // one line: with CONTENT height a long title wraps out of the card instead of ending in "..."
+        b.size(name, stock::ROW_W - 68 - 48, NAME_H)?;
         b.long_mode(name, LongMode::Dot)?;
         b.style(name, Prop::TextAlign, 0, 1)?; // LV_TEXT_ALIGN_LEFT: the root centres
         b.style(name, Prop::TextFont, 0, F24 as i32)?;
@@ -373,7 +420,8 @@ fn event_cards<'e>(b: &mut Batch, flush: &mut Flush, r: Obj, top: i32, events: i
     }
     b.scroll_bar(r)?;
     b.knob(r)?;
-    b.flags(r, &[], &[Flag::Hidden])
+    b.flags(r, &[], &[Flag::Hidden])?;
+    Ok(cards)
 }
 
 /// The page next to the watch face: `sel`'s date, this week with its dots (a tap picks a day), and `sel`'s events
@@ -407,8 +455,8 @@ pub fn widget_view<'e>(b: &mut Batch, flush: &mut Flush, today: Day, sel: Day, k
         cells[i] = c;
     }
     room(b, flush)?;
-    event_cards(b, flush, r, W_TOP, events, k.note.unwrap_or("no events"))?;
-    Ok(WidgetView { root: r, title, today, sel, cells })
+    let cards = event_cards(b, flush, r, W_TOP, events, k.note.unwrap_or("no events"))?;
+    Ok(WidgetView { root: r, title, today, sel, cells, cards })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -417,6 +465,7 @@ pub struct DayView {
     /// Tap: back to the month.
     pub title: Obj,
     pub day: Day,
+    pub cards: Cards,
 }
 
 /// One day's events, a crown-scrolled page like the stock lists: the accent date (tap: back to the month), then a
@@ -425,8 +474,47 @@ pub fn day_view<'e>(b: &mut Batch, flush: &mut Flush, day: Day, events: impl Ite
     -> Result<DayView, LvError> {
     room(b, flush)?;
     let (r, title) = day_root(b, day)?;
-    event_cards(b, flush, r, DAY_TOP, events, "no events")?;
-    Ok(DayView { root: r, title, day })
+    let cards = event_cards(b, flush, r, DAY_TOP, events, "no events")?;
+    Ok(DayView { root: r, title, day, cards })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EventView {
+    /// Tap anywhere: back to the list.
+    pub root: Obj,
+    pub day: Day,
+    /// Opened from the page (back to it) rather than from a day.
+    pub page: bool,
+}
+
+/// One event: its date, time and calendar colour, and the whole title wrapped (as much as the phone sends,
+/// `rpc::TITLE_MAX` bytes); the crown scrolls a long one.
+pub fn event_view(b: &mut Batch, flush: &mut Flush, day: Day, e: &Event, page: bool) -> Result<EventView, LvError> {
+    room(b, flush)?;
+    let (r, title) = day_root(b, day)?;
+    b.flags(title, &[], &[Flag::Clickable])?; // the root takes the tap
+    b.flags(r, &[Flag::Clickable], &[])?;
+    b.events(r, &[Ev::Clicked])?;
+    let time = label(b, r, span_text(e).as_str(), 300, 0, DAY_TOP as i16)?;
+    b.style(time, Prop::TextFont, 0, F48 as i32)?;
+    let bar = b.create(Class::Obj, r)?;
+    b.size(bar, 64, 8)?;
+    b.style(bar, Prop::Radius, 0, CIRCLE)?;
+    b.style(bar, Prop::BorderWidth, 0, 0)?;
+    b.style(bar, Prop::BgColor, 0, e.color as i32)?;
+    b.style(bar, Prop::BgOpa, 0, 255)?;
+    b.flags(bar, &[], &[Flag::Clickable])?;
+    b.align(bar, Align::TopMid, 0, DAY_TOP as i16 + 76)?;
+    let name = label(b, r, if e.title().is_empty() { "busy" } else { e.title() }, stock::ROW_W - 40, 0,
+        DAY_TOP as i16 + 104)?;
+    b.long_mode(name, LongMode::Wrap)?;
+    if e.title().is_empty() {
+        b.style(name, Prop::TextColor, 0, GREY)?;
+    }
+    b.scroll_bar(r)?;
+    b.knob(r)?;
+    b.flags(r, &[], &[Flag::Hidden])?;
+    Ok(EventView { root: r, day, page })
 }
 
 /// Deletes a screen.
@@ -506,6 +594,13 @@ mod tests {
             let (w, _) = run(&mut t, &mut b, |b, f| month_view(b, f, m(2026, 12), Some(today), &k));
             assert_eq!(w.root, v.root);
             assert_eq!((w.title, w.prev, w.next), (v.title, v.prev, v.next));
+            // turning months in place: two grids at once stay inside the object budget, and the old one is freed
+            let mut v = w;
+            for mo in [11, 10, 9, 11] {
+                let (n, _) = run(&mut t, &mut b, |b, f| month_turn(b, f, v, m(2026, mo), Some(today), &k));
+                assert_eq!((n.root, n.title), (v.root, v.title));
+                v = n;
+            }
         }
     }
 
@@ -550,6 +645,12 @@ mod tests {
                 day_view(b, f, today, evs.iter())
             });
             std::println!("day view: {sizes:?} B");
+            run(&mut t, &mut b, |b, _| leave(b, v.root));
+            if let Some(e) = evs.first() {
+                let (v, _) = run(&mut t, &mut b, |b, f| event_view(b, f, today, e, false));
+                run(&mut t, &mut b, |b, _| leave(b, v.root));
+            }
+            let (v, _) = run(&mut t, &mut b, |b, f| event_view(b, f, today, &event(0, 1440, 1, ""), true));
             run(&mut t, &mut b, |b, _| leave(b, v.root));
             run(&mut t, &mut b, |b, f| month_view(b, f, today.month, Some(today), &busy(today)));
         }
