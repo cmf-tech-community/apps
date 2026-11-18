@@ -1,7 +1,7 @@
 # The app's listing in the FMC store (README.md, "store.toml"). The page's body is store.md.
 name = "Calendar"
-summary = "Today's and tomorrow's events from your phone, on the watch, a widget card and a page"
-version = "0.1.0"
+summary = "A month with your phone's events as dots, a page next to the watch face and a widget"
+version = "0.2.0"
 author = "Egor Kolesnikov"
 published = true
-screenshots = ["shots/events.png", "shots/hidden.png", "shots/ask.png", "shots/cached.png"]
+screenshots = ["shots/month.png", "shots/day.png", "shots/page.png", "shots/card.png"]

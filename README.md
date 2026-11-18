@@ -12,7 +12,7 @@ An app runs on a watch with the patched firmware and the App Loader, both on the
 | [`vibration-lab`](apps/vibration-lab) | A test bench for the vibration motor. The template for new apps |
 | [`ui-gallery`](apps/ui-gallery) | The stock firmware's widgets as an app can use them |
 | [`orbit`](apps/orbit) | Round-screen Pong: turn the crown to keep the ball inside the ring |
-| [`calendar`](apps/calendar) | Today's and tomorrow's phone events, as an app, a widget card and a page (needs FMC Companion) |
+| [`calendar`](apps/calendar) | A month with the phone's events as dots, a page next to the face and a widget card (needs FMC Companion) |
 
 ## Make your own app
 

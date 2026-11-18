@@ -1,14 +1,17 @@
-Your phone's events for today and tomorrow: the time, the calendar's colour and the title. Events that are over drop
-off the list; turn the crown to scroll. The watch asks the phone when you open the app and every 5 minutes while it
-runs, and keeps the last answer, so with the phone out of reach you still see your day, with how old it is.
+A month calendar for the wrist. Today sits in an accent pill, and each day of the coming week with events gets a dot
+in its calendar's colour (up to three per day). Turn the crown or tap **<** and **>** to change the month; tap the
+month's name to come back to today. Tap a day with dots to see its events: time, calendar colour and title.
 
-Add it as a **widget** (the next event and the time until it) or as a **page** next to the watch face: a long press
-on its row in Apps.
+It can also live next to the watch face: long-press **Calendar** in Apps and choose **Add page** for today's events under this
+week (tap a day of the week for its events, the crown scrolls them), or **Add widget** for a card with the date and today's event count.
 
-Titles stay on the phone by default and the watch shows "Busy". To see them, turn on "Show text on the watch" for
+The events come from your phone: the watch asks when you open the app and every 5 minutes while it runs, and keeps the
+last answer. The phone sends the next 7 days, so days further on have no dots.
+
+Titles stay on the phone by default and the watch shows "busy". To see them, turn on "Show text on the watch" for
 Calendar in FMC Companion: anyone near enough to the watch's Bluetooth could read them too.
 
-The first time, the watch says "Allow on your phone": allow Calendar in FMC Companion's Permissions screen.
+The first time, the watch says "allow on your phone": allow Calendar in FMC Companion's Permissions screen.
 
 ## Requirements
 

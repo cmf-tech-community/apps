@@ -8,6 +8,9 @@ version.workspace = true
 cmf-wp2-app.workspace = true
 cmf-wp2-ui.workspace = true
 
+[dev-dependencies]
+wp2-core.workspace = true
+
 [[bin]]
 name = "calendar"
 bench = false

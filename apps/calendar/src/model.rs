@@ -1,12 +1,10 @@
-//! What the app knows and when it asks: the last answer, the cache, polling with retry and back-off, and the texts
-//! the screen and the widget show. No `Api`: `now` is `api.now()` ms, `wall` the watch's local time in minutes
+//! What the app knows and when it asks: the last answer, the cache, polling with retry and back-off. No `Api`: `now` is `api.now()` ms, `wall` the watch's local time in minutes
 //! since 1970-01-01 (see [`wall_min`]).
 
 use crate::rpc::{self, Event, RECORD_MAX};
-use core::fmt::Write;
 
-/// Events asked for (today and tomorrow, at most this many).
-pub const MAX: usize = 10;
+/// Events asked for (the week from today, at most this many; the RPC sends 32 at most).
+pub const MAX: usize = 32;
 /// Poll while running.
 pub const PERIOD_MS: u32 = 300_000;
 /// First retry when the phone does not answer; doubles up to [`PERIOD_MS`].
@@ -34,13 +32,6 @@ pub enum Got {
     Changed,
     /// New events: save the cache.
     Events,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Item {
-    /// Section header: 0 today, 1 tomorrow.
-    Day(i32),
-    Event(usize),
 }
 
 pub struct Model {
@@ -117,7 +108,7 @@ impl Model {
         self.got = 0;
         self.total = 0;
         self.next = now.wrapping_add(self.backoff);
-        Some(rpc::calendar_request(self.id, 0, 2, MAX as u8))
+        Some(rpc::calendar_request(self.id, 0, crate::marks::DAYS as u8, MAX as u8))
     }
 
     /// Ms until [`Model::poll`] has something to do.
@@ -216,120 +207,12 @@ impl Model {
 
     /// Event `i` relative to today 00:00 at `wall`: (day, start minute, end minute). The phone's `day` counts from
     /// the day of the answer, so a cache from yesterday moves one day back.
-    fn span(&self, i: usize, wall: i32) -> (i32, i32, i32) {
+    pub fn span(&self, i: usize, wall: i32) -> (i32, i32, i32) {
         let e = &self.events[i];
         let shift = wall.div_euclid(1440) - self.fetched.unwrap_or(wall).div_euclid(1440);
         let day = e.day as i32 - shift;
         let start = day * 1440 + e.start as i32;
         (day, start, start + e.duration as i32)
-    }
-
-    /// The rows to show: events not over yet, today and tomorrow, each day under its header.
-    pub fn items(&self, wall: i32, out: &mut [Item; 2 * MAX]) -> usize {
-        let now = wall.rem_euclid(1440);
-        let (mut n, mut last) = (0, -1);
-        for i in 0..self.n {
-            let (day, _, end) = self.span(i, wall);
-            if end <= now || day > 1 {
-                continue;
-            }
-            let day = day.max(0); // started yesterday, still on
-            if day != last {
-                out[n] = Item::Day(day);
-                n += 1;
-                last = day;
-            }
-            out[n] = Item::Event(i);
-            n += 1;
-        }
-        n
-    }
-
-    /// The widget card: title ("Next: 14:30") and value ("in 25 min\nStandup"). The value moves in 5-minute and
-    /// then hour steps, so the NAND record is rewritten at most every 5 minutes.
-    pub fn widget(&self, wall: i32, title: &mut Buf<24>, value: &mut Buf<40>) {
-        let now = wall.rem_euclid(1440);
-        let next = (0..self.n)
-            .filter(|&i| !self.events[i].all_day())
-            .map(|i| (i, self.span(i, wall)))
-            .find(|&(_, (day, _, end))| end > now && day <= 1);
-        match (self.status, next) {
-            (Status::Ask, _) => {
-                let _ = write!(title, "Calendar");
-                let _ = write!(value, "Allow on your phone");
-            }
-            (_, Some((i, (_, start, end)))) => {
-                let name = label(&self.events[i]);
-                if start <= now {
-                    let _ = write!(title, "Now, until ");
-                    hhmm(title, end);
-                    let _ = write!(value, "{name}");
-                } else {
-                    let _ = write!(title, "Next: ");
-                    hhmm(title, start);
-                    let left = start - now;
-                    let _ = if left < 60 {
-                        write!(value, "in {} min\n{name}", (left + 4) / 5 * 5)
-                    } else {
-                        write!(value, "in {} h\n{name}", left / 60)
-                    };
-                }
-            }
-            (_, None) => {
-                let _ = write!(title, "Calendar");
-                let _ = write!(value, "{}", if self.fetched.is_some() { "No more events" } else { "No data yet" });
-            }
-        }
-    }
-}
-
-/// What a row says for an event: its title, or "Busy" when the phone keeps titles to itself.
-pub fn label(e: &Event) -> &str {
-    if e.title().is_empty() { "Busy" } else { e.title() }
-}
-
-/// "HH:MM" of a minute (any day).
-pub fn hhmm(out: &mut impl Write, min: i32) {
-    let m = min.rem_euclid(1440);
-    let _ = write!(out, "{:02}:{:02}", m / 60, m % 60);
-}
-
-/// "14 min ago", "2 h ago", "3 d ago".
-pub fn age(out: &mut impl Write, minutes: i32) {
-    let m = minutes.max(0);
-    let _ = match m {
-        0 => write!(out, "just now"),
-        1..=59 => write!(out, "{m} min ago"),
-        60..=1439 => write!(out, "{} h ago", m / 60),
-        _ => write!(out, "{} d ago", m / 1440),
-    };
-}
-
-/// Text in a fixed buffer, cut at a char boundary when full.
-pub struct Buf<const N: usize> {
-    b: [u8; N],
-    n: usize,
-}
-
-impl<const N: usize> Buf<N> {
-    pub const fn new() -> Self {
-        Buf { b: [0; N], n: 0 }
-    }
-
-    pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.b[..self.n]).unwrap_or("")
-    }
-}
-
-impl<const N: usize> Write for Buf<N> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let mut k = s.len().min(N - self.n);
-        while !s.is_char_boundary(k) {
-            k -= 1;
-        }
-        self.b[self.n..self.n + k].copy_from_slice(&s.as_bytes()[..k]);
-        self.n += k;
-        Ok(())
     }
 }
 
@@ -368,10 +251,10 @@ mod tests {
     fn multi_part_answer_in_any_order_then_cached() {
         let mut m = Model::new();
         let req = m.poll(0).unwrap();
-        assert_eq!(req, [b'R', b'1', b'Q', 1, 0x10, 0, 2, 10]);
+        assert_eq!(req, [b'R', b'1', b'Q', 1, 0x10, 0, 7, 32]);
         assert_eq!(m.reply(&msg(1, 0, 1, 2, &rec(0, 600, 30, 0, "Обед")), 100, WALL), Got::Nothing);
         assert_eq!(m.reply(&msg(1, 0, 0, 2, &rec(0, 570, 30, 4, "")), 100, WALL), Got::Events);
-        assert_eq!((m.n, m.status, m.events[1].title(), label(&m.events[0])), (2, Status::Ok, "Обед", "Busy"));
+        assert_eq!((m.n, m.status, m.events[1].title(), m.events[0].title()), (2, Status::Ok, "Обед", ""));
         assert!(m.poll(PERIOD_MS + 99).is_none() && m.poll(PERIOD_MS + 100).is_some());
 
         let mut blob = [0u8; BLOB_MAX];
@@ -395,7 +278,7 @@ mod tests {
         }
         assert_eq!(m.poll(0).unwrap()[3], 8);
         assert_eq!(m.reply(&hex("52314108000001003a021e000400f8"), 0, WALL), Got::Events);
-        assert_eq!((m.n, label(&m.events[0])), (1, "Busy"));
+        assert_eq!((m.n, m.events[0].title()), (1, ""));
     }
 
     #[test]
@@ -420,41 +303,5 @@ mod tests {
         assert_eq!((m.status, m.silent, m.wait(7)), (Status::Ask, false, ASK_AGAIN_MS));
         // a second answer to the same id is ignored
         assert_eq!(m.reply(&msg(id, rpc::DENIED, 0, 0, &[]), 8, WALL), Got::Nothing);
-    }
-
-    #[test]
-    fn rows_drop_past_events_and_follow_the_date() {
-        let mut m = Model::new();
-        m.poll(0);
-        let recs = [rec(0, 0, 1440, 1, "Отпуск"), rec(0, 420, 30, 0, "Gym"), rec(0, 570, 30, 0, "A"), rec(1, 540, 60, 0, "B"), rec(2, 60, 60, 0, "C")];
-        for (i, r) in recs.iter().enumerate() {
-            m.reply(&msg(1, 0, i as u8, 5, r), 0, WALL);
-        }
-        let mut out = [Item::Day(0); 2 * MAX];
-        let n = m.items(WALL, &mut out);
-        assert_eq!(&out[..n], &[Item::Day(0), Item::Event(0), Item::Event(2), Item::Day(1), Item::Event(3)]);
-        // the same cache read the next day at 08:00: B is today, C tomorrow
-        let n = m.items(WALL + 1440, &mut out);
-        assert_eq!(&out[..n], &[Item::Day(0), Item::Event(3), Item::Day(1), Item::Event(4)]);
-
-        let (mut t, mut v) = (Buf::<24>::new(), Buf::<40>::new());
-        m.widget(WALL, &mut t, &mut v);
-        assert_eq!((t.as_str(), v.as_str()), ("Next: 09:30", "in 1 h\nA"));
-        let (mut t, mut v) = (Buf::<24>::new(), Buf::<40>::new());
-        m.widget(WALL + 68, &mut t, &mut v);
-        assert_eq!((t.as_str(), v.as_str()), ("Next: 09:30", "in 25 min\nA"));
-        let (mut t, mut v) = (Buf::<24>::new(), Buf::<40>::new());
-        m.widget(WALL + 95, &mut t, &mut v);
-        assert_eq!((t.as_str(), v.as_str()), ("Now, until 10:00", "A"));
-    }
-
-    #[test]
-    fn texts() {
-        let mut b = Buf::<8>::new();
-        let _ = write!(b, "Абвгд");
-        assert_eq!(b.as_str(), "Абвг");
-        let mut b = Buf::<16>::new();
-        age(&mut b, 135);
-        assert_eq!(b.as_str(), "2 h ago");
     }
 }

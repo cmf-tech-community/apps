@@ -60,6 +60,7 @@ impl Event {
         self.flags & 1 != 0
     }
 
+    #[cfg(test)]
     pub fn tentative(&self) -> bool {
         self.flags & 2 != 0
     }
