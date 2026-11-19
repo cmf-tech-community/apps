@@ -2,4 +2,3 @@ name = "Watch Pong"
 summary = "Circular Pong against the watch, steered with the crown"
 version = "0.1.0"
 author = "Abdalrahman"
-published = true
