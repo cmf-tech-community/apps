@@ -2,4 +2,3 @@ name = "Haptic Metronome"
 summary = "Tactile vibration metronome with Tap Tempo, time signatures, and adjustable pulse strength."
 version = "0.1.0"
 author = "XwlNnGemini"
-published = true

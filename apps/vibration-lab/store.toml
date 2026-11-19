@@ -3,4 +3,3 @@ name = "Vibration Lab"
 summary = "Tune the motor: strength, frequency, patterns"
 version = "0.1.1"
 author = "CMF Tech Community"
-published = true

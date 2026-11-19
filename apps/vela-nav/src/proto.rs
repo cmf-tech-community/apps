@@ -163,6 +163,17 @@ impl Model {
         cmf_wp2_ui::text::fit(&self.text[..self.text_len], TEXT_MAX)
     }
 
+    /// Length of the route line in metres; 0 while there is none.
+    pub fn length_m(&self) -> i64 {
+        self.route[..self.route_len]
+            .windows(2)
+            .map(|w| {
+                let (dx, dy) = ((w[1][0] - w[0][0]) as i64, (w[1][1] - w[0][1]) as i64);
+                isqrt((dx * dx + dy * dy) as u64) as i64
+            })
+            .sum()
+    }
+
     pub fn apply(&mut self, m: &[u8]) -> Effect {
         let [b'n', b'1', kind, seq, body @ ..] = m else {
             return Effect::Ignored;
@@ -269,7 +280,8 @@ impl Model {
         if b.len() < 3 {
             return Some(false);
         }
-        if self.route_id != Some(b[0]) || u16_at(b, 1) as usize != self.route_got || self.route_got != self.route_count {
+        if self.route_id != Some(b[0]) || u16_at(b, 1) as usize != self.route_got || self.route_got != self.route_count
+        {
             self.route_id = None;
             return None;
         }
@@ -281,6 +293,20 @@ impl Model {
 impl Default for Model {
     fn default() -> Self {
         Model::new()
+    }
+}
+
+fn isqrt(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut x = 1u64 << ((64 - n.leading_zeros()).div_ceil(2));
+    loop {
+        let y = (x + n / x) / 2;
+        if y >= x {
+            return x;
+        }
+        x = y;
     }
 }
 
@@ -342,13 +368,29 @@ mod tests {
     use std::boxed::Box;
 
     fn active() -> State {
-        State { flags: F_ACTIVE | F_FIX, maneuver: man::LEFT, dist_m: 350, x: -12, y: 40000, course: 16384, ..State::default() }
+        State {
+            flags: F_ACTIVE | F_FIX,
+            maneuver: man::LEFT,
+            dist_m: 350,
+            x: -12,
+            y: 40000,
+            course: 16384,
+            ..State::default()
+        }
     }
 
     #[test]
     fn state_round_trips() {
         let mut m = Box::new(Model::new());
-        let s = State { limit: 50, remaining_10m: 820, remaining_s: 840, after: man::RIGHT, after_m: 90, progress: 7, ..active() };
+        let s = State {
+            limit: 50,
+            remaining_10m: 820,
+            remaining_s: 840,
+            after: man::RIGHT,
+            after_m: 90,
+            progress: 7,
+            ..active()
+        };
         assert_eq!(m.apply(&state(0, &s)), Effect::Changed);
         assert_eq!(m.state, s);
         assert!(m.has_state);
@@ -418,7 +460,15 @@ mod tests {
     #[test]
     fn junk_is_ignored() {
         let mut m = Box::new(Model::new());
-        for junk in [&b""[..], b"n", b"x1S\x00", b"n1S\x00\x01", b"n1Z\x00abc", b"n1B\x00\x01\xff\xff\x01", b"n1B\x00\x01\x02\x00\x00"] {
+        for junk in [
+            &b""[..],
+            b"n",
+            b"x1S\x00",
+            b"n1S\x00\x01",
+            b"n1Z\x00abc",
+            b"n1B\x00\x01\xff\xff\x01",
+            b"n1B\x00\x01\x02\x00\x00",
+        ] {
             m.reset_seq();
             assert_eq!(m.apply(junk), Effect::Ignored, "{junk:?}");
         }

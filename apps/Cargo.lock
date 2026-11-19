@@ -24,10 +24,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "focus-timer"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "wp2-core",
+]
+
+[[package]]
 name = "metronome"
 version = "0.1.0"
 dependencies = [
  "cmf-wp2-app",
+]
+
+[[package]]
+name = "mood"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "wp2-core",
 ]
 
 [[package]]
@@ -44,6 +60,13 @@ version = "0.1.0"
 dependencies = [
  "cmf-wp2-app",
  "cmf-wp2-ui",
+]
+
+[[package]]
+name = "twenty48"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
 ]
 
 [[package]]

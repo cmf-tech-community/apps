@@ -4,7 +4,12 @@
 
 // the host build (tests) has no device loop, so some of the protocol is unused there
 #[cfg_attr(not(any(target_os = "none", wp2_sim)), allow(dead_code))]
+mod font;
+#[rustfmt::skip]
+mod fonts;
+#[cfg_attr(not(any(target_os = "none", wp2_sim)), allow(dead_code))]
 mod proto;
+mod sign;
 #[cfg_attr(not(any(target_os = "none", wp2_sim)), allow(dead_code))]
 mod view;
 

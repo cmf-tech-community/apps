@@ -86,7 +86,7 @@ new:
 	@test ! -e apps/$(NAME) || { echo 'apps/$(NAME) exists'; exit 1; }
 	cp -R apps/$(TEMPLATE) apps/$(NAME)
 	sed -i.bak 's/"$(TEMPLATE)"/"$(NAME)"/' apps/$(NAME)/Cargo.toml
-	printf 'name = "%s"\nsummary = ""\nversion = "0.1.0"\nauthor = ""\npublished = true\n' '$(NAME)' > apps/$(NAME)/store.toml
+	printf 'name = "%s"\nsummary = ""\nversion = "0.1.0"\nauthor = ""\n' '$(NAME)' > apps/$(NAME)/store.toml
 	printf 'What %s does.\n\n## Requirements\n\nThe [patched firmware](/firmware) and the [App Loader](/firmware).\n' '$(NAME)' > apps/$(NAME)/store.md
 	rm -f apps/$(NAME)/Cargo.toml.bak
 	@echo 'apps/$(NAME): now edit src/, icon.svg, store.toml and store.md'

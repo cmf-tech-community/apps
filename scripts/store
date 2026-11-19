@@ -5,7 +5,9 @@ which fetches the pinned SDK first and puts llvm-objcopy on PATH.
   scripts/store changed BASE      apps to build-check for a change since BASE: the ones it touches, all of them
                                   when it touches the SDK pin or the build tooling
   scripts/store bumps BASE        fail unless every app touched since BASE raised its version (a new app: any)
-  scripts/store released BASE     apps whose version went up since BASE (new ones too): what main publishes
+  scripts/store released          apps whose version is above the store's, or that it hasn't got: what a push to
+                                  main publishes (STORE_URL, STORE_PUBLISH_TOKEN), so a release a failed run
+                                  missed goes out with the next one
   scripts/store check [NAME...]   validate the listings (all without NAME)
   scripts/store build NAME...     check, then build target/<name>.wp2app with the pinned wp2-apps tooling;
                                   icon.svg -> target/<name>-icon.png, the store's icon
@@ -29,13 +31,15 @@ TARGET = ROOT / "target"
 SHARED = ("apps/Cargo.toml", "apps/Cargo.lock", "apps/.cargo/", "Makefile", "scripts/store", ".github/workflows/store.yml")
 # key: (type, max length); the store's limits (fmc_pocketbase, migration 1754000000_store.js)
 KEYS = {"name": (str, 60), "summary": (str, 140), "version": (str, 24), "author": (str, 60),
-        "published": (bool, None), "screenshots": (list, 8)}
+        "screenshots": (list, 8)}
 VERSION = re.compile(r"(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})")
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
 
 
 def apps():
-    return sorted(p.parent.name for p in APPS.glob("*/store.toml"))
+    """Every folder in apps/: one without a store.toml fails `listing`, so CI can't skip it (it is still a member
+    of the cargo workspace, and a broken one breaks every app's build)."""
+    return sorted(p.name for p in APPS.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
 def version(text):
@@ -83,19 +87,33 @@ def bumps(base):
         old, new = version_at(base, name), version(listing(name)[0]["version"])
         if old is not None and new < old:
             errors.append(f"{name}: version went down, {'.'.join(map(str, old))} -> {'.'.join(map(str, new))}")
-        elif old is not None and new == old and any(f.startswith(f"apps/{name}/") for f in files):
+        elif old is not None and new == old and any(f.startswith(f"apps/{name}/") for f in files) \
+                and not only_dropped_published(base, name, files):
             errors.append(f"{name}: changed, but its version in store.toml is still {'.'.join(map(str, old))}")
     if errors:
         raise ValueError("\n".join(errors))
 
 
-def released(base):
-    """The apps a push to main publishes: a new listing, or a higher version than at BASE."""
-    if set(base) == {"0"}:  # the first push of a branch: everything on it is new
-        return apps()
-    if touched(base) is None:
-        raise ValueError(f"can't diff against {base}; publish by hand with workflow_dispatch")
-    return [a for a in apps() if version_at(base, a) is None or version(listing(a)[0]["version"]) > version_at(base, a)]
+def only_dropped_published(base, name, files):
+    """The one change that needs no new version: `published` taken out of store.toml (the store owns it now).
+    ponytail: drop once every app's store.toml has lost it"""
+    if [f for f in files if f.startswith(f"apps/{name}/")] != [f"apps/{name}/store.toml"]:
+        return False
+    show = subprocess.run(["git", "show", f"{base}:apps/{name}/store.toml"], cwd=ROOT, capture_output=True, text=True)
+    old = tomllib.loads(show.stdout)
+    old.pop("published", None)
+    return old == tomllib.loads((APPS / name / "store.toml").read_text())
+
+
+def released():
+    """The apps a push to main publishes: the store hasn't got them, or has a lower version."""
+    out = subprocess.run(["curl", "--silent", "--show-error", "--fail-with-body", "--retry", "2", "--header", "@-",
+                          f"{os.environ['STORE_URL'].rstrip('/')}/api/store/versions"],
+                         input=f"Authorization: Bearer {os.environ['STORE_PUBLISH_TOKEN']}\n", capture_output=True, text=True)
+    if out.returncode:
+        raise ValueError(f"the store's versions: {out.stdout or out.stderr}")
+    store = json.loads(out.stdout)
+    return [a for a in apps() if a not in store or version(listing(a)[0]["version"]) > version(store[a])]
 
 
 def listing(name):
@@ -173,7 +191,7 @@ def publish(name, dry_run):
         "slug": name, "name": meta["name"], "summary": meta.get("summary", ""), "description": description,
         "version": meta.get("version", ""), "author": meta.get("author", ""),
         "source": f"https://github.com/{repo}/tree/main/apps/{name}",
-        "published": str(meta.get("published", False)).lower(), "dry": "1" if dry_run else "",
+        "dry": "1" if dry_run else "",
     }
     args = ["curl", "--silent", "--show-error", "--fail-with-body", "--retry", "2",
             "--header", "@-", f"{os.environ['STORE_URL'].rstrip('/')}/api/store/publish",
@@ -198,8 +216,10 @@ def main(argv):
         raise SystemExit(__doc__)
     command, rest = argv[0], argv[1:]
     try:
-        if command in ("changed", "released"):
-            print(" ".join((changed if command == "changed" else released)(rest[0])))
+        if command == "changed":
+            print(" ".join(changed(rest[0])))
+        elif command == "released":
+            print(" ".join(released()))
         elif command == "bumps":
             bumps(rest[0])
         elif command == "check":
