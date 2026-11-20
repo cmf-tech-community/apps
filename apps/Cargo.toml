@@ -13,6 +13,8 @@ version = "0.1.0"
 cmf-wp2-app = { path = "../.sdk/wp2-apps/sdk/cmf-wp2-app" }
 cmf-wp2-ui = { path = "../.sdk/wp2-apps/sdk/cmf-wp2-ui" }
 wp2-core = { path = "../.sdk/wp2-apps/fw/wp2-core" }
+# shared by the apps here (../crates)
+companion-rpc = { path = "../crates/companion-rpc" }
 
 [profile.dev]
 panic = "abort"

@@ -3,5 +3,4 @@ name = "Orbit"
 summary = "Round-screen Pong: turn the crown to keep the ball inside the ring"
 version = "0.1.0"
 author = "Nandhini"
-published = true
 screenshots = ["shots/ready.png", "shots/playing.png", "shots/over.png"]

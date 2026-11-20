@@ -13,8 +13,8 @@ A review checks:
   or real names other than the author's own. Placeholder MAC: `AA:BB:CC:DD:EE:FF`.
 - **No copied code under an incompatible license.** This repository is MIT. In particular nothing from
   cmf-watch-utils (AGPL-3.0).
-- **The listing tells the truth.** `store.md` says what the app does and what it needs (`## Requirements`), and
-  `published = false` until it's ready.
+- **The listing tells the truth.** `store.md` says what the app does and what it needs (`## Requirements`). An app
+  is listed as soon as it is merged, so merge it when it's ready.
 - **It was run.** In the emulator or on your own watch; say which in the PR, with a screenshot.
 
 Contributions are MIT-licensed, like the rest of the repository.

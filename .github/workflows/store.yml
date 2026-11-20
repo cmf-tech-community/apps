@@ -1,6 +1,7 @@
 # The store pipeline, see README.md ("How an update reaches the store").
 # A pull request: every app it touches must raise its version, and every app it touches is built (all of them
-# when it changes the SDK pin or the build tooling). A push to main publishes the apps whose version went up.
+# when it changes the SDK pin or the build tooling). A push to main publishes every app whose version is above the
+# store's (or that the store hasn't got), so one a failed run missed goes out with the next push.
 # By hand (Actions, Store, Run workflow): build the named apps and publish them, a dry run by default.
 name: Store
 
@@ -42,14 +43,16 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
           INPUT_APPS: ${{ inputs.apps }}
+          # push: `released` asks the store which versions it has
+          STORE_URL: ${{ github.event_name == 'push' && vars.STORE_URL || '' }}
+          STORE_PUBLISH_TOKEN: ${{ github.event_name == 'push' && secrets.STORE_PUBLISH_TOKEN || '' }}
         run: |
           case "$EVENT" in
             pull_request)
               scripts/store bumps "$PR_BASE"
               apps=$(scripts/store changed "$PR_BASE") ;;
-            push) apps=$(scripts/store released "$BEFORE") ;;
+            push) apps=$(scripts/store released) ;;
             *) apps=${INPUT_APPS:-$(cd apps && ls -d */ | tr -d / | tr '\n' ' ')} ;;
           esac
           scripts/store check

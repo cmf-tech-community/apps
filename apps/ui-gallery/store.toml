@@ -3,4 +3,3 @@ name = "UI Gallery"
 summary = "The watch's own widgets, in the stock look"
 version = "0.2.0"
 author = "CMF Tech Community"
-published = true

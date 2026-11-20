@@ -7,6 +7,7 @@ version.workspace = true
 [dependencies]
 cmf-wp2-app.workspace = true
 cmf-wp2-ui.workspace = true
+companion-rpc.workspace = true
 
 [dev-dependencies]
 wp2-core.workspace = true

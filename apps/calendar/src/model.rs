@@ -1,19 +1,17 @@
 //! What the app knows and when it asks: the last answer, the cache, polling with retry and back-off. No `Api`: `now` is `api.now()` ms, `wall` the watch's local time in minutes
 //! since 1970-01-01 (see [`wall_min`]).
 
-use crate::rpc::{self, Event, RECORD_MAX};
+use companion_rpc::{self as rpc, Call, Event};
 
 /// Events asked for (the week from today, at most this many; the RPC sends 32 at most).
 pub const MAX: usize = 32;
 /// Poll while running.
 pub const PERIOD_MS: u32 = 300_000;
-/// First retry when the phone does not answer; doubles up to [`PERIOD_MS`].
-pub const RETRY_MS: u32 = 3_000;
 /// While the phone asks the user: look again soon, the grant may come any moment.
 pub const ASK_AGAIN_MS: u32 = 10_000;
 /// The cache blob: magic, fetched (i32 wall minute), count, then `len ‖ record` per event.
 const MAGIC: &[u8; 2] = b"C1";
-pub const BLOB_MAX: usize = 7 + MAX * (1 + RECORD_MAX);
+pub const BLOB_MAX: usize = 7 + MAX * (1 + Event::RECORD_MAX);
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Status {
@@ -40,21 +38,11 @@ pub struct Model {
     /// When `events` came, wall minutes; `None` = nothing ever came.
     pub fetched: Option<i32>,
     pub status: Status,
-    /// The latest request got no answer in time.
-    pub silent: bool,
-    /// Bumped on every change the screen shows.
-    pub rev: u32,
-    id: u8,
-    asking: bool,
-    next: u32,
-    backoff: u32,
+    call: Call,
+    ids: u8,
     pending: [Event; MAX],
-    got: u32,
-    total: u8,
-}
-
-fn due(now: u32, at: u32) -> bool {
-    (now.wrapping_sub(at) as i32) >= 0
+    /// The records of the open answer that decoded.
+    ok: u32,
 }
 
 /// Days since 1970-01-01 of a civil date (H. Hinnant's `days_from_civil`).
@@ -71,106 +59,80 @@ pub fn wall_min(y: i32, m: u32, d: u32, hour: u32, minute: u32) -> i32 {
     days(y, m, d) * 1440 + (hour * 60 + minute) as i32
 }
 
+const EMPTY: Event = Event { day: 0, start: 0, duration: 0, flags: 0, color: 0, title: rpc::Text::EMPTY };
+
 impl Model {
     pub const fn new() -> Self {
         Model {
-            events: [Event::EMPTY; MAX],
+            events: [EMPTY; MAX],
             n: 0,
             fetched: None,
             status: Status::Waiting,
-            silent: false,
-            rev: 0,
-            id: 0,
-            asking: false,
-            next: 0,
-            backoff: RETRY_MS,
-            pending: [Event::EMPTY; MAX],
-            got: 0,
-            total: 0,
+            call: Call::new(PERIOD_MS),
+            ids: 0,
+            pending: [EMPTY; MAX],
+            ok: 0,
         }
     }
 
-    /// A request to send now, if one is due. A request still unanswered at that point marks the phone silent and
-    /// the next try waits twice as long.
-    pub fn poll(&mut self, now: u32) -> Option<[u8; 8]> {
-        if !due(now, self.next) {
-            return None;
-        }
-        if self.asking {
-            if !self.silent {
-                self.silent = true;
-                self.rev += 1;
-            }
-            self.backoff = (self.backoff * 2).min(PERIOD_MS);
-        }
-        self.id = self.id.wrapping_add(1);
-        self.asking = true;
-        self.got = 0;
-        self.total = 0;
-        self.next = now.wrapping_add(self.backoff);
-        Some(rpc::calendar_request(self.id, 0, crate::marks::DAYS as u8, MAX as u8))
+    /// A request to send now, if one is due (the first one, or a retry that backs off while the phone is silent).
+    pub fn poll(&mut self, now: u32) -> Option<rpc::Msg> {
+        let id = self.call.due(now, &mut self.ids)?;
+        self.ok = 0;
+        Some(rpc::calendar_events(id, 0, crate::marks::DAYS as u8, MAX as u8))
     }
 
     /// Ms until [`Model::poll`] has something to do.
     pub fn wait(&self, now: u32) -> u32 {
-        (self.next.wrapping_sub(now) as i32).max(0) as u32
+        self.call.wait(now)
     }
 
     /// Ask at once (start, RESUME), with a fresh back-off.
     pub fn ask_now(&mut self, now: u32) {
-        self.asking = false;
-        self.backoff = RETRY_MS;
-        self.next = now;
+        self.call.now(now);
     }
 
     /// One message from the channel. Replies to anything but the latest request are dropped.
     pub fn reply(&mut self, m: &[u8], now: u32, wall: i32) -> Got {
-        let Some(r) = rpc::reply(m) else { return Got::Nothing };
-        if !self.asking || r.id != self.id {
-            return Got::Nothing;
-        }
-        if r.status != rpc::OK || r.total == 0 {
-            self.status = match r.status {
-                rpc::OK => Status::Ok,
-                rpc::ASK => Status::Ask,
-                rpc::DENIED => Status::Denied,
-                _ => Status::Unavailable,
-            };
-            let ok = self.status == Status::Ok;
-            if ok {
+        match self.call.take(m) {
+            rpc::Got::Nothing => Got::Nothing,
+            rpc::Got::Status(s) => {
+                self.status = match s {
+                    rpc::OK => Status::Ok,
+                    rpc::ASK => Status::Ask,
+                    rpc::DENIED => Status::Denied,
+                    _ => Status::Unavailable,
+                };
+                self.call.after(now, if self.status == Status::Ask { ASK_AGAIN_MS } else { PERIOD_MS });
+                if self.status != Status::Ok {
+                    return Got::Changed;
+                }
                 self.n = 0;
                 self.fetched = Some(wall);
+                Got::Events
             }
-            self.answered(now, if self.status == Status::Ask { ASK_AGAIN_MS } else { PERIOD_MS });
-            return if ok { Got::Events } else { Got::Changed };
+            // a multi-part answer: one record each, any order; one that doesn't decode is left out
+            rpc::Got::Record { index, record, last, .. } => {
+                if let (Some(e), true) = (Event::decode(record), (index as usize) < MAX) {
+                    self.pending[index as usize] = e;
+                    self.ok |= 1 << index;
+                }
+                if !last {
+                    return Got::Nothing;
+                }
+                self.n = 0;
+                for i in 0..MAX {
+                    if self.ok & 1 << i != 0 {
+                        self.events[self.n] = self.pending[i];
+                        self.n += 1;
+                    }
+                }
+                self.fetched = Some(wall);
+                self.status = Status::Ok;
+                self.call.after(now, PERIOD_MS);
+                Got::Events
+            }
         }
-        // a multi-part answer: index 0..total, any order, one record each
-        if r.index >= r.total || r.total > 32 || (self.got != 0 && r.total != self.total) {
-            return Got::Nothing;
-        }
-        let Some(e) = Event::decode(r.record) else { return Got::Nothing };
-        self.total = r.total;
-        if (r.index as usize) < MAX {
-            self.pending[r.index as usize] = e;
-        }
-        self.got |= 1 << r.index;
-        if self.got != (1u64 << r.total) as u32 - 1 {
-            return Got::Nothing;
-        }
-        self.n = (r.total as usize).min(MAX);
-        self.events[..self.n].copy_from_slice(&self.pending[..self.n]);
-        self.fetched = Some(wall);
-        self.status = Status::Ok;
-        self.answered(now, PERIOD_MS);
-        Got::Events
-    }
-
-    fn answered(&mut self, now: u32, after: u32) {
-        self.asking = false;
-        self.silent = false;
-        self.backoff = RETRY_MS;
-        self.next = now.wrapping_add(after);
-        self.rev += 1;
     }
 
     /// The cache blob into `out` ([`BLOB_MAX`] bytes); its length, 0 if there is nothing to keep.
@@ -219,7 +181,11 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::tests::hex;
+    use companion_rpc::RETRY_MS;
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
 
     // 2026-11-17 08:00
     const WALL: i32 = 20_774 * 1440 + 8 * 60;
@@ -250,11 +216,13 @@ mod tests {
     #[test]
     fn multi_part_answer_in_any_order_then_cached() {
         let mut m = Model::new();
+        assert!(m.poll(0).is_none()); // nothing before the start's ask_now
+        m.ask_now(0);
         let req = m.poll(0).unwrap();
-        assert_eq!(req, [b'R', b'1', b'Q', 1, 0x10, 0, 7, 32]);
+        assert_eq!(&req[..], [b'R', b'1', b'Q', 1, 0x10, 0, 7, 32]);
         assert_eq!(m.reply(&msg(1, 0, 1, 2, &rec(0, 600, 30, 0, "Обед")), 100, WALL), Got::Nothing);
         assert_eq!(m.reply(&msg(1, 0, 0, 2, &rec(0, 570, 30, 4, "")), 100, WALL), Got::Events);
-        assert_eq!((m.n, m.status, m.events[1].title(), m.events[0].title()), (2, Status::Ok, "Обед", ""));
+        assert_eq!((m.n, m.status, m.events[1].title.as_str(), m.events[0].title.as_str()), (2, Status::Ok, "Обед", ""));
         assert!(m.poll(PERIOD_MS + 99).is_none() && m.poll(PERIOD_MS + 100).is_some());
 
         let mut blob = [0u8; BLOB_MAX];
@@ -273,34 +241,38 @@ mod tests {
         // rpc-vectors.json "replies", id 8: one record, title hidden
         let mut m = Model::new();
         for _ in 0..7 {
-            m.poll(0);
             m.ask_now(0);
+            m.poll(0);
         }
+        m.ask_now(0);
         assert_eq!(m.poll(0).unwrap()[3], 8);
         assert_eq!(m.reply(&hex("52314108000001003a021e000400f8"), 0, WALL), Got::Events);
-        assert_eq!((m.n, m.events[0].title()), (1, ""));
+        assert_eq!((m.n, m.events[0].title.as_str()), (1, ""));
     }
 
     #[test]
     fn stale_ids_dropped_silence_backs_off() {
         let mut m = Model::new();
+        m.ask_now(0);
         m.poll(0);
         assert!(m.poll(RETRY_MS - 1).is_none());
         assert_eq!(m.poll(RETRY_MS).unwrap()[3], 2);
-        assert!(m.silent);
+        assert!(m.call.silent());
         assert_eq!(m.wait(RETRY_MS), 2 * RETRY_MS);
         // the late answer to request 1 is not the latest
         assert_eq!(m.reply(&msg(1, 0, 0, 0, &[]), RETRY_MS + 5, WALL), Got::Nothing);
         assert!(m.poll(3 * RETRY_MS).is_some());
         assert_eq!(m.wait(3 * RETRY_MS), 4 * RETRY_MS);
+        let mut t = 3 * RETRY_MS;
         for _ in 0..10 {
-            m.poll(m.next);
+            t += m.wait(t);
+            m.poll(t);
         }
-        assert_eq!(m.backoff, PERIOD_MS);
+        assert_eq!(m.wait(t), PERIOD_MS);
         // ASK for the latest id, look again in 10 s, the silence is over
-        let id = m.id;
+        let id = m.ids;
         assert_eq!(m.reply(&msg(id, rpc::ASK, 0, 0, &[]), 7, WALL), Got::Changed);
-        assert_eq!((m.status, m.silent, m.wait(7)), (Status::Ask, false, ASK_AGAIN_MS));
+        assert_eq!((m.status, m.call.silent(), m.wait(7)), (Status::Ask, false, ASK_AGAIN_MS));
         // a second answer to the same id is ignored
         assert_eq!(m.reply(&msg(id, rpc::DENIED, 0, 0, &[]), 8, WALL), Got::Nothing);
     }

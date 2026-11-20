@@ -7,7 +7,7 @@
 //!   opens the month view, a tap on its title comes back.
 //! - The card left of the watch face (`app_features!(WIDGET)`): "Sun 15 Nov" and today's count.
 //!
-//! Events for the coming week come from FMC Companion on the phone (`calendar.events`, `rpc.rs`); the watch keeps
+//! Events for the coming week come from FMC Companion on the phone (`calendar.events`, the `companion-rpc` crate); the watch keeps
 //! the last answer (`model.rs`) and turns it into a count and calendar-coloured dots per day (`marks.rs`). Without
 //! the phone the calendar works and says "not synced".
 #![cfg_attr(target_os = "none", no_std, no_main)]
@@ -18,8 +18,6 @@ mod date;
 mod marks;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod model;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod rpc;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod screen;
 
@@ -115,7 +113,7 @@ mod device {
     }
 
     /// The phone's events that start on `d`.
-    fn events(m: &Model, w: i32, today: Option<Day>, d: Day) -> impl Iterator<Item = &crate::rpc::Event> {
+    fn events(m: &Model, w: i32, today: Option<Day>, d: Day) -> impl Iterator<Item = &companion_rpc::Event> {
         let off = crate::marks::day_no(d) - today.map_or(0, crate::marks::day_no);
         (0..m.n).filter(move |&i| m.span(i, w).0 == off).map(move |i| &m.events[i])
     }

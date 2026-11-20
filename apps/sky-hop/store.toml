@@ -3,5 +3,4 @@ name = "Sky Hop"
 summary = "Tap to hop through the pipes. One-touch arcade game"
 version = "0.1.2"
 author = "CMF Tech Community"
-published = true
 screenshots = ["shots/ready.png", "shots/playing.png", "shots/over.png"]

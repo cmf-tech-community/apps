@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "cmf-wp2-app",
  "cmf-wp2-ui",
+ "companion-rpc",
  "wp2-core",
 ]
 
@@ -24,10 +25,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "companion-rpc"
+version = "0.1.0"
+
+[[package]]
+name = "focus-timer"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "wp2-core",
+]
+
+[[package]]
+name = "ha-remote"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "wp2-core",
+]
+
+[[package]]
 name = "metronome"
 version = "0.1.0"
 dependencies = [
  "cmf-wp2-app",
+]
+
+[[package]]
+name = "mood"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "wp2-core",
 ]
 
 [[package]]
@@ -39,11 +68,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "reminders"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "companion-rpc",
+ "wp2-core",
+]
+
+[[package]]
 name = "sky-hop"
 version = "0.1.0"
 dependencies = [
  "cmf-wp2-app",
  "cmf-wp2-ui",
+]
+
+[[package]]
+name = "twenty48"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
 ]
 
 [[package]]

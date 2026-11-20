@@ -1,0 +1,6 @@
+# The app's listing in the FMC store (README.md, "store.toml"). The page's body is store.md.
+name = "Reminders"
+summary = "Your iPhone's open reminders on the wrist: overdue, today and later, tick them off with a tap"
+version = "0.1.0"
+author = "Egor Kolesnikov"
+screenshots = ["shots/list.png", "shots/confirm.png", "shots/allow.png"]

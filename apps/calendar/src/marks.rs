@@ -91,6 +91,7 @@ mod tests {
         let wall = wall_min(2026, 11, 17, 8, 0);
         let mut m = Model::new();
         assert_eq!(Marks::build(&m, today, wall).note, Some("not synced"));
+        m.ask_now(0);
         m.poll(0);
         let recs = [rec(0, 570, 0xF800), rec(0, 600, 0xF800), rec(0, 700, 0x07E0), rec(2, 60, 0x001F), rec(9, 0, 0xFFFF)];
         for (i, r) in recs.iter().enumerate() {

@@ -9,7 +9,7 @@
 
 use crate::date::{self, Day, Month, CELLS};
 use crate::marks::{Mark, Marks};
-use crate::rpc::Event;
+use companion_rpc::Event;
 use cmf_wp2_app::lv::*;
 use cmf_wp2_app::stock::{self, ACCENT, BLACK, CIRCLE, GREY, SCREEN, WHITE};
 use core::fmt::Write;
@@ -351,7 +351,7 @@ const W_TOP: i32 = GRID_Y + ROW_H + 16;
 pub fn span_text(e: &Event) -> Line {
     let mut out = Line::new();
     let hm = |m: u32| (m / 60 % 24, m % 60);
-    if e.all_day() {
+    if e.flags & Event::ALL_DAY != 0 {
         let _ = out.write_str("all day");
     } else {
         let (a, b) = (hm(e.start as u32), hm(e.start as u32 + e.duration as u32));
@@ -410,7 +410,7 @@ fn event_cards<'e>(b: &mut Batch, flush: &mut Flush, r: Obj, top: i32, events: i
         b.style(name, Prop::TextAlign, 0, 1)?; // LV_TEXT_ALIGN_LEFT: the root centres
         b.style(name, Prop::TextFont, 0, F24 as i32)?;
         b.style(name, Prop::TextColor, 0, GREY)?;
-        b.text(name, if e.title().is_empty() { "busy" } else { e.title() })?;
+        b.text(name, if e.title.is_empty() { "busy" } else { e.title.as_str() })?;
         b.align(name, Align::TopLeft, 68, 52)?;
         n += 1;
     }
@@ -488,7 +488,7 @@ pub struct EventView {
 }
 
 /// One event: its date, time and calendar colour, and the whole title wrapped (as much as the phone sends,
-/// `rpc::TITLE_MAX` bytes); the crown scrolls a long one.
+/// `companion_rpc::TEXT_MAX` bytes); the crown scrolls a long one.
 pub fn event_view(b: &mut Batch, flush: &mut Flush, day: Day, e: &Event, page: bool) -> Result<EventView, LvError> {
     room(b, flush)?;
     let (r, title) = day_root(b, day)?;
@@ -505,10 +505,10 @@ pub fn event_view(b: &mut Batch, flush: &mut Flush, day: Day, e: &Event, page: b
     b.style(bar, Prop::BgOpa, 0, 255)?;
     b.flags(bar, &[], &[Flag::Clickable])?;
     b.align(bar, Align::TopMid, 0, DAY_TOP as i16 + 76)?;
-    let name = label(b, r, if e.title().is_empty() { "busy" } else { e.title() }, stock::ROW_W - 40, 0,
+    let name = label(b, r, if e.title.is_empty() { "busy" } else { e.title.as_str() }, stock::ROW_W - 40, 0,
         DAY_TOP as i16 + 104)?;
     b.long_mode(name, LongMode::Wrap)?;
-    if e.title().is_empty() {
+    if e.title.is_empty() {
         b.style(name, Prop::TextColor, 0, GREY)?;
     }
     b.scroll_bar(r)?;
