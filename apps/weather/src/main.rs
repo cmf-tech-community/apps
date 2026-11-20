@@ -74,8 +74,9 @@ mod device {
                     }
                 })
                 .and_then(|v| self.b.submit(&lv).map(|_| v));
-            if let Ok(v) = r {
-                self.view = v;
+            match r {
+                Ok(v) => self.view = v,
+                Err(_) => self.b.clear(), // or the records left in it fail every later draw
             }
             self.shown = self.key(w);
         }

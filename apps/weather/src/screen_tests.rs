@@ -199,3 +199,54 @@ fn bar_colours_run_cold_to_hot() {
     assert_eq!(bar_color(-128, -128), c[0]);
     assert_eq!(bar_color(127, 127), c[5]);
 }
+
+/// What the emulator's fake phone answers: mixed hours and days, in "Berlin" (the pager came out black there).
+fn mixed(hour0: u8) -> Model {
+    let hours = [(-3, 2, 10, 0), (-3, 2, 10, 0), (-4, 3, 20, 0), (-4, 3, 30, 0), (-5, 71, 60, 1), (-5, 71, 70, 1),
+        (-6, 73, 80, 1), (-6, 3, 20, 1), (-6, 0, 0, 1), (-5, 0, 0, 1), (-4, 1, 10, 1), (-3, 61, 40, 1)];
+    let days = [(-6, -2, 2, 20), (-8, -3, 71, 70), (-4, 1, 3, 30), (0, 5, 61, 80), (2, 8, 1, 10), (4, 11, 0, 0), (-1, 6, 95, 60)];
+    let mut v = Vec::from([[0, 0xDE, 0xFF, 2, 5, 78, 3].to_vec()]);
+    let mut h = Vec::from([2, hour0]);
+    for (t, code, p, night) in hours {
+        h.extend([t as i8 as u8, code, p | night << 7]);
+    }
+    v.push(h);
+    for (d, (lo, hi, code, p)) in days.iter().enumerate() {
+        v.push([1, d as u8, *lo as i8 as u8, *hi as i8 as u8, *code, *p].to_vec());
+    }
+    answered(&v)
+}
+
+/// A view is built into whatever the batch already holds, so no group of records may be longer than the room
+/// asked for before it: every fill level the batch can start at, every icon.
+#[test]
+fn the_views_build_from_any_fill_level() {
+    let mut models = Vec::from([mixed(22), mixed(9)]);
+    for code in [0, 2, 3, 45, 55, 63, 73, 95] {
+        models.push(full(code, 12, 7));
+    }
+    for (i, m) in models.iter().enumerate() {
+        for fill in 0..200 {
+            let mut t = Table::new();
+            let mut b = batch();
+            let mut flush = |b: &mut Batch| -> Result<(), LvError> {
+                assert_eq!(lvcmd::validate(b.bytes(), &t, FONTS), Ok(()));
+                for r in lvcmd::records(b.bytes()) {
+                    lvcmd::apply(&mut t, &r.unwrap());
+                }
+                b.clear();
+                Ok(())
+            };
+            for _ in 0..fill {
+                if b.style(ROOT, Prop::BgColor, 0, BLACK).is_err() {
+                    break; // full to the brim is a fill level too
+                }
+            }
+            let at = b.bytes().len();
+            let r = pages_view(&mut b, &mut flush, m, WALL, 0).map(|_| ());
+            assert_eq!(r, Ok(()), "model {i}, {at} bytes in the batch");
+            let r = face_view(&mut b, &mut flush, m, WALL).map(|_| ());
+            assert_eq!(r, Ok(()), "model {i}, the face page");
+        }
+    }
+}

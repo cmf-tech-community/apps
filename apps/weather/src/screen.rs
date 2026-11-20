@@ -40,6 +40,8 @@ const GROUP: usize = 760;
 
 pub type Flush<'a> = dyn FnMut(&mut Batch) -> Result<(), LvError> + 'a;
 
+/// Flushes unless a group of records still fits: called before each one, and none is longer than GROUP (the
+/// tests build the views from every fill level).
 fn room(b: &mut Batch, flush: &mut Flush) -> Result<(), LvError> {
     if b.bytes().len() + GROUP > BUF { flush(b) } else { Ok(()) }
 }
@@ -205,6 +207,7 @@ fn now_content(b: &mut Batch, flush: &mut Flush, parent: Obj, m: &Model, wall: i
     }
     // the temperature and, since the fonts have no degree sign, a ring after it: a row as wide as the two, moved
     // right by half the ring so the number stays in the middle
+    room(b, flush)?;
     let row = b.create(Class::Obj, parent)?;
     b.size(row, CONTENT, CONTENT)?;
     plain(b, row)?;
@@ -225,6 +228,7 @@ fn now_content(b: &mut Batch, flush: &mut Flush, parent: Obj, m: &Model, wall: i
     b.flags(ring, &[], &[Flag::Clickable, Flag::Scrollable])?;
     // night for the icon: what the current hour says, when there are hours
     let night = m.hour_at(0, wall).is_some_and(|(_, is_now, h)| is_now && h.night);
+    room(b, flush)?;
     icon(b, parent, model::icon(n.code), night, 0, NOW_Y + 98, 52)?;
     room(b, flush)?;
     label(b, parent, model::condition(n.code), MSG_W, 0, NOW_Y + 158, 2)?;
@@ -303,6 +307,7 @@ fn days_content(b: &mut Batch, flush: &mut Flush, page: Obj, m: &Model, wall: i3
         icon(b, page, model::icon(d.code), false, -42, y + 4, 40)?;
         let lo_l = label(b, page, model::temp_text(d.min as i16).as_str(), 56, 6, y + 12, 3)?;
         small(b, lo_l, GREY)?;
+        room(b, flush)?;
         let track = shape(b, page, 73, y + 22, BAR_W as i32, BAR_H as i32, TRACK)?;
         b.style(track, Prop::PadLeft, 0, 0)?;
         let (x, len) = model::bar(d.min, d.max, lo, hi, BAR_W, BAR_H);

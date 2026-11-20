@@ -3,3 +3,4 @@ name = "Weather"
 summary = "Now, the next hours and the week ahead where you are, with a page next to the watch face and a widget card"
 version = "0.1.0"
 author = "Egor Kolesnikov"
+screenshots = ["shots/now.png", "shots/hours.png", "shots/days.png", "shots/card.png"]
