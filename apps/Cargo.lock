@@ -60,6 +60,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "music-controller"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "cmf-wp2-ui",
+]
+
+[[package]]
 name = "orbit"
 version = "0.1.0"
 dependencies = [

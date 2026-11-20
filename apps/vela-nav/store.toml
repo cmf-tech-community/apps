@@ -1,6 +1,6 @@
 # The app's listing in the FMC store (README.md, "store.toml"). The page's body is store.md.
 name = "Vela Nav"
 summary = "Turn-by-turn directions from the Vela maps app on your phone: next turn, route map, arrival time"
-version = "1.0.0"
+version = "1.1.0"
 author = "arunk140"
-screenshots = ["shots/driving.png", "shots/turn.png", "shots/arrived.png"]
+screenshots = ["shots/driving.png", "shots/turn.png", "shots/map.png", "shots/home.png"]

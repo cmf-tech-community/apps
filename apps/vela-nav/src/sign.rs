@@ -24,11 +24,13 @@ pub struct Sign {
     n: usize,
     /// Stroke width in px.
     w: i32,
+    /// A black outline this many px wide around the sign, drawn in the same pass, so it reads over the map.
+    pub halo: i32,
 }
 
 impl Sign {
     pub fn new(w: i32) -> Sign {
-        Sign { parts: [Part::Ring((0, 0), 0); 24], n: 0, w }
+        Sign { parts: [Part::Ring((0, 0), 0); 24], n: 0, w, halo: 0 }
     }
 
     fn push(&mut self, p: Part) -> &mut Sign {
@@ -75,7 +77,7 @@ impl Sign {
                 let len2 = dx * dx + dy * dy;
                 let t = if len2 == 0 { 0 } else { ((p.0 - a.0) * dx + (p.1 - a.1) * dy).clamp(0, len2) };
                 let (cx, cy) = if len2 == 0 { a } else { (a.0 + dx * t / len2, a.1 + dy * t / len2) };
-                near((p.0 - cx).pow(2) + (p.1 - cy).pow(2), half)
+                near((p.0 - cx).pow(2) + (p.1 - cy).pow(2), half, (self.halo as i64 + 1) * U)
             }
             Part::Ring(c, r) => {
                 let c = q(c);
@@ -101,7 +103,7 @@ impl Sign {
 
     /// The part's box in px, grown by the stroke and a pixel of soft edge.
     fn bbox(&self, part: &Part) -> (i32, i32, i32, i32) {
-        let g = self.w / 2 + 2;
+        let g = self.w / 2 + 2 + self.halo;
         let (x0, y0, x1, y1) = match *part {
             Part::Seg(a, b) => (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)),
             Part::Ring(c, r) => (c.0 - r, c.1 - r, c.0 + r, c.1 + r),
@@ -115,17 +117,21 @@ impl Sign {
         (x0 - g, y0 - g, x1 + g, y1 + g)
     }
 
-    /// Draws the sign in colour `c` over `bg`, looking only inside the box `x0..x1`, `y0..y1`.
+    /// Draws the sign in colour `c` over `bg` (over its own black outline when it has a `halo`), looking only inside
+    /// the box `x0..x1`, `y0..y1`.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(&self, s: &mut impl Surface, x0: i32, y0: i32, x1: i32, y1: i32, c: u16, bg: u16) {
         let mut boxes = [(0, 0, 0, 0); 24];
         for (b, part) in boxes.iter_mut().zip(&self.parts[..self.n]) {
             *b = self.bbox(part);
         }
-        let mut shade = [0u16; 17];
-        for (k, v) in shade.iter_mut().enumerate() {
+        let bg = if self.halo > 0 { 0 } else { bg };
+        // 0 nothing, 1..=16 the sign's coverage, 17 the outline
+        let mut shade = [0u16; 18];
+        for (k, v) in shade.iter_mut().enumerate().take(17) {
             *v = blend565(bg, c, k as i32 * ONE / 16);
         }
+        let outline = self.halo as i64 * U + U / 2;
         for y in y0..y1 {
             let mut run: Option<(i32, usize)> = None;
             for x in x0..=x1 {
@@ -139,8 +145,9 @@ impl Sign {
                         .filter(|(_, b)| x >= b.0 && x <= b.2 && y >= b.1 && y <= b.3)
                         .map(|(part, _)| self.dist(part, p))
                         .min()
-                        .unwrap_or(U);
-                    (U / 2 - d).clamp(0, U) as usize
+                        .unwrap_or(i64::MAX / 2);
+                    let k = (U / 2 - d).clamp(0, U) as usize;
+                    if k == 0 && d < outline { 17 } else { k }
                 };
                 match run {
                     Some((_, rk)) if rk == k => {}
@@ -169,11 +176,11 @@ pub fn head(tip: (i32, i32), a: u16, h: i32) -> [(i32, i32); 3] {
 }
 
 /// The distance from `d2`, a squared distance, to a stroke of half width `half`, with the square root taken only
-/// on the soft edge: well inside is `-U`, well outside `U`.
-fn near(d2: i64, half: i64) -> i64 {
-    let out = half + U;
+/// where it matters: well inside is `-U`, beyond `reach` outside is `reach`.
+fn near(d2: i64, half: i64, reach: i64) -> i64 {
+    let out = half + reach;
     if d2 >= out * out {
-        return U;
+        return reach;
     }
     let inn = (half - U).max(0);
     if d2 <= inn * inn && half >= U {

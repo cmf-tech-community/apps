@@ -4,6 +4,10 @@
 
 The output is committed, so a build needs neither Python nor the font files. Noto Sans is under the SIL Open
 Font License 1.1 (OFL.txt next to this script); the tables are a converted copy of it.
+
+Coverage is 4 bits a pixel. The large sizes are stored as runs, a byte each (coverage << 4 | length - 1, a run
+never crossing a row): their rows are long stretches of empty and solid, so that is a third to two thirds of the
+packed size, and lossless. The small size has busy edges and stays packed, two pixels a byte.
 """
 import sys
 from pathlib import Path
@@ -13,16 +17,31 @@ SRC = Path(sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/google-noto")
 OUT = Path(__file__).resolve().parent.parent / "src" / "fonts.rs"
 ASCII = "".join(chr(c) for c in range(32, 127))
 
+RLE = {"XL", "L"}
+
 # (Rust name, file, px, characters)
 FONTS = [
     ("XL", "NotoSans-Bold.ttf", 84, "0123456789. "),
-    # units, the clock, the limit, titles
-    ("L", "NotoSans-SemiBold.ttf", 40, "0123456789:. abcdefghijklmnopqrstuvwxyzAVNRO"),
+    # units, the clock, the limit, titles, the Home and Work buttons
+    ("L", "NotoSans-SemiBold.ttf", 40, "0123456789:. abcdefghijklmnopqrstuvwxyzAVNROHSW…"),
     ("S", "NotoSans-Medium.ttf", 26, ASCII + "…·"),
 ]
 
 
-def glyphs(file, px, chars):
+def runs(px4, w):
+    out = bytearray()
+    for r in range(0, len(px4), w):
+        row, i = px4[r:r + w], 0
+        while i < len(row):
+            j = i
+            while j < len(row) and row[j] == row[i] and j - i < 16:
+                j += 1
+            out.append(row[i] << 4 | (j - i - 1))
+            i = j
+    return bytes(out)
+
+
+def glyphs(file, px, chars, rle):
     font = ImageFont.truetype(str(SRC / file), px)
     ascent, descent = font.getmetrics()
     rows, data = [], bytearray()
@@ -38,9 +57,12 @@ def glyphs(file, px, chars):
             x0, y0 = box[0] - px, box[1] - px * 2
             w, h = box[2] - box[0], box[3] - box[1]
             px4 = [v // 17 for v in q.crop(box).get_flattened_data()]
-            if len(px4) % 2:
-                px4.append(0)
-            data += bytes(px4[i] << 4 | px4[i + 1] for i in range(0, len(px4), 2))
+            if rle:
+                data += runs(px4, w)
+            else:
+                if len(px4) % 2:
+                    px4.append(0)
+                data += bytes(px4[i] << 4 | px4[i + 1] for i in range(0, len(px4), 2))
         rows.append((ch, adv, x0, y0, w, h, off))
     cap = font.getbbox("H", anchor="ls")[1]  # its top edge, so ink-exact
     return ascent, descent, -cap, rows, data
@@ -58,14 +80,17 @@ out = [
 ]
 total = 0
 for name, file, px, chars in FONTS:
-    ascent, descent, cap, rows, data = glyphs(file, px, chars)
+    rle = name in RLE
+    ascent, descent, cap, rows, data = glyphs(file, px, chars, rle)
     total += len(data) + len(rows) * 12
     print(name, len(data))
-    out.append(f"/// {file[:-4]} at {px} px: {len(rows)} glyphs, {len(data)} B of 4-bit coverage.")
+    kind = "runs of 4-bit coverage" if rle else "4-bit coverage"
+    out.append(f"/// {file[:-4]} at {px} px: {len(rows)} glyphs, {len(data)} B of {kind}.")
     out.append(f"pub static {name}: Font = Font {{")
     out.append(f"    ascent: {ascent},")
     out.append(f"    descent: {descent},")
     out.append(f"    cap: {cap},")
+    out.append(f"    rle: {str(rle).lower()},")
     out.append("    glyphs: &[")
     for ch, adv, x, y, w, h, off in rows:
         out.append(f"        Glyph {{ c: '{rust_char(ch)}', adv: {adv}, x: {x}, y: {y}, w: {w}, h: {h}, off: {off} }},")

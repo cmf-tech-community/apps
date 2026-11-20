@@ -8,20 +8,42 @@
 //! |---|---|---|
 //! | `S` | flags u8, maneuver u8, dist u16 m, after u8, after dist u16 m, remaining u16 (10 m), remaining u16 s, limit u8, x i32 m, y i32 m, course u16, progress u16 | the drive, about once a second |
 //! | `T` | UTF-8, ≤ 100 B | the road being entered (or the destination on arrival) |
-//! | `B` | id u8, count u16, scale u8 (m per unit) | a new route line begins |
+//! | `B` | id u8, count u16, scale u8 (m per unit), frame u16 (optional) | a new route line begins; it replaces the shown one at its `E` |
 //! | `R` | id u8, start u16, n u8, n × (x i16, y i16) | route points `start..start+n`, n ≤ 30 |
 //! | `E` | id u8, count u16 | the route line is complete |
+//! | `G` | id u8, x i32 m, y i32 m | a new set of streets around (x, y) begins |
+//! | `H` | id u8, then records: n u8 (2..=30), class u8 (0 minor, 1 major), n × (x i16, y i16) m from the set's (x, y) | streets |
+//! | `J` | id u8, lines u16, points u16 | the set is complete: it replaces the one shown |
+//! | `P` | flags u8 (1 Home set, 2 Work set), status u8 (0 idle, 1 starting a drive, 2 could not plan it) | the shortcuts the watch may offer: whether each is set, never where |
 //!
-//! Watch → phone: `n1Q`, "send me everything" (on start, after a gap, after `RESUME`, and while nothing arrives).
+//! Streets are drawn under the route, fading out away from it. They share the route's frame: a route in another
+//! frame (its `frame` tag differs, or has none) drops them when it is complete, and the phone sends a set for the new
+//! frame after it. The same route sent again (a snapshot) keeps them.
+//!
+//! Watch → phone: `n1Q`, "send me everything" (on start, after a gap, after `RESUME`, and while nothing arrives);
+//! `n1A` + 1 or 2, "start a drive to Home / Work" (a button on the screen shown without a drive).
 //!
 //! Positions are metres east (`x`) and north (`y`) of an origin the phone picks per drive, never latitude and
 //! longitude: the channel can be read by anyone in Bluetooth range. `course` is the heading in 1/65536 turns
 //! clockwise from north. `progress` is the index of the first route point still ahead of the car.
 
 pub const ASK: [u8; 3] = *b"n1Q";
+pub const P_HOME: u8 = 1;
+pub const P_WORK: u8 = 2;
+pub const START_BUSY: u8 = 1;
+pub const START_FAILED: u8 = 2;
+
+/// "Start a drive to Home / Work" (`P_HOME`, `P_WORK`).
+pub fn action(kind: u8) -> [u8; 4] {
+    [b'n', b'1', b'A', kind]
+}
 pub const ROUTE_MAX: usize = 512;
 pub const TEXT_MAX: usize = 100;
 pub const CHUNK_MAX: usize = 30;
+/// Street points and lines one set holds; the phone sends the nearest streets first and stops below these.
+pub const ROADS_PTS: usize = 1200;
+pub const ROADS_LINES: usize = 240;
+pub const ROAD_LINE_MAX: usize = 30;
 
 pub const F_ACTIVE: u8 = 1 << 0;
 pub const F_ARRIVED: u8 = 1 << 1;
@@ -94,21 +116,76 @@ pub enum Effect {
     Resync,
 }
 
+/// One street line: `n` points from `first` in `Roads::pts`.
+#[derive(Clone, Copy, Default)]
+pub struct RoadLine {
+    pub first: u16,
+    pub n: u16,
+    pub major: bool,
+}
+
+/// A set of streets: points in metres from `origin`, which is in the route's frame.
+pub struct Roads {
+    pub origin: [i32; 2],
+    pub pts: [[i16; 2]; ROADS_PTS],
+    pub lines: [RoadLine; ROADS_LINES],
+    pub n_pts: usize,
+    pub n_lines: usize,
+}
+
+impl Roads {
+    pub const fn new() -> Roads {
+        Roads {
+            origin: [0; 2],
+            pts: [[0; 2]; ROADS_PTS],
+            lines: [RoadLine { first: 0, n: 0, major: false }; ROADS_LINES],
+            n_pts: 0,
+            n_lines: 0,
+        }
+    }
+
+    /// A line's points in the route's frame.
+    pub fn line(&self, l: &RoadLine) -> impl Iterator<Item = [i32; 2]> + '_ {
+        self.pts[l.first as usize..(l.first + l.n) as usize]
+            .iter()
+            .map(|p| [self.origin[0] + p[0] as i32, self.origin[1] + p[1] as i32])
+    }
+}
+
+impl Default for Roads {
+    fn default() -> Self {
+        Roads::new()
+    }
+}
+
 pub struct Model {
     pub state: State,
     /// A state arrived since the last `reset` (the screen shows "waiting" until then).
     pub has_state: bool,
+    /// The shortcuts the phone has (`P_HOME`, `P_WORK` bits) and what came of the last start (`START_*`).
+    pub places: u8,
+    pub start: u8,
     /// A state with `F_SNAPSHOT` arrived after the last gap: the watch has everything.
     pub synced: bool,
     text: [u8; TEXT_MAX],
     text_len: usize,
     pub route: [[i32; 2]; ROUTE_MAX],
-    /// Points of a complete route line; 0 while none (or while a new one arrives).
+    /// Points of the complete route line shown; 0 while none. A new one arrives in `incoming` beside it.
     pub route_len: usize,
+    incoming: [[i32; 2]; ROUTE_MAX],
+    /// The frame of the line shown, and of the one arriving.
+    frame: Option<u16>,
+    incoming_frame: Option<u16>,
     route_id: Option<u8>,
     route_count: usize,
     route_got: usize,
     route_scale: i32,
+    /// The set shown is `roads[live]`; the next one arrives in the other.
+    roads: [Roads; 2],
+    live: usize,
+    roads_id: Option<u8>,
+    /// Lines of the set arriving, kept or not.
+    roads_seen: usize,
     last_seq: Option<u8>,
 }
 
@@ -140,15 +217,24 @@ impl Model {
                 progress: 0,
             },
             has_state: false,
+            places: 0,
+            start: 0,
             synced: false,
             text: [0; TEXT_MAX],
             text_len: 0,
             route: [[0; 2]; ROUTE_MAX],
             route_len: 0,
+            incoming: [[0; 2]; ROUTE_MAX],
+            frame: None,
+            incoming_frame: None,
             route_id: None,
             route_count: 0,
             route_got: 0,
             route_scale: 1,
+            roads: [Roads::new(), Roads::new()],
+            live: 0,
+            roads_id: None,
+            roads_seen: 0,
             last_seq: None,
         }
     }
@@ -161,6 +247,21 @@ impl Model {
     /// The road line, cut on a character boundary.
     pub fn text(&self) -> &str {
         cmf_wp2_ui::text::fit(&self.text[..self.text_len], TEXT_MAX)
+    }
+
+    /// The streets shown.
+    pub fn roads(&self) -> &Roads {
+        &self.roads[self.live]
+    }
+
+    #[cfg(test)]
+    pub fn drop_roads_for_test(&mut self) {
+        self.drop_roads()
+    }
+
+    fn drop_roads(&mut self) {
+        self.roads[self.live].n_lines = 0;
+        self.roads_id = None;
     }
 
     /// Length of the route line in metres; 0 while there is none.
@@ -189,6 +290,10 @@ impl Model {
             b'B' => self.on_begin(body),
             b'R' => self.on_points(body),
             b'E' => self.on_end(body),
+            b'G' => self.on_roads_begin(body),
+            b'H' => self.on_roads(body),
+            b'J' => self.on_roads_end(body),
+            b'P' => self.on_places(body),
             _ => Some(false),
         };
         match applied {
@@ -230,6 +335,8 @@ impl Model {
             // no drive: drop the line so a later drive never shows the previous one
             self.route_len = 0;
             self.route_id = None;
+            self.frame = None;
+            self.drop_roads();
         }
         Some(true)
     }
@@ -250,8 +357,9 @@ impl Model {
             return Some(false);
         }
         (self.route_id, self.route_count, self.route_got, self.route_scale) = (Some(b[0]), count, 0, b[3] as i32);
-        self.route_len = 0;
-        Some(true)
+        self.incoming_frame = if b.len() >= 6 { Some(u16_at(b, 4)) } else { None };
+        // the line shown stays until this one is complete
+        Some(false)
     }
 
     fn on_points(&mut self, b: &[u8]) -> Option<bool> {
@@ -260,8 +368,7 @@ impl Model {
         }
         let (id, start, n) = (b[0], u16_at(b, 1) as usize, b[3] as usize);
         if self.route_id != Some(id) {
-            self.route_len = 0; // a chunk of a line whose begin we missed: the line shown is old
-            return None;
+            return None; // a chunk of a line whose begin we missed: ask again
         }
         if b.len() < 4 + 4 * n || n > CHUNK_MAX || start != self.route_got || start + n > self.route_count {
             self.route_id = None;
@@ -269,7 +376,7 @@ impl Model {
         }
         for i in 0..n {
             let at = 4 + 4 * i;
-            self.route[start + i] =
+            self.incoming[start + i] =
                 [i16_at(b, at) as i32 * self.route_scale, i16_at(b, at + 2) as i32 * self.route_scale];
         }
         self.route_got += n;
@@ -285,7 +392,73 @@ impl Model {
             self.route_id = None;
             return None;
         }
-        self.route_len = self.route_got;
+        let n = self.route_got;
+        self.route[..n].copy_from_slice(&self.incoming[..n]);
+        self.route_len = n;
+        self.route_id = None;
+        if self.incoming_frame.is_none() || self.incoming_frame != self.frame {
+            self.drop_roads(); // another frame: the streets shown are in the old one
+        }
+        self.frame = self.incoming_frame;
+        Some(true)
+    }
+}
+
+impl Model {
+    fn on_places(&mut self, b: &[u8]) -> Option<bool> {
+        let [flags, start, ..] = *b else { return Some(false) };
+        (self.places, self.start) = (flags & (P_HOME | P_WORK), start);
+        Some(true)
+    }
+
+    fn on_roads_begin(&mut self, b: &[u8]) -> Option<bool> {
+        if b.len() < 9 {
+            return Some(false);
+        }
+        let next = &mut self.roads[1 - self.live];
+        (next.origin, next.n_pts, next.n_lines) = ([i32_at(b, 1), i32_at(b, 5)], 0, 0);
+        (self.roads_id, self.roads_seen) = (Some(b[0]), 0);
+        Some(false)
+    }
+
+    fn on_roads(&mut self, b: &[u8]) -> Option<bool> {
+        if b.is_empty() || self.roads_id != Some(b[0]) {
+            return Some(false); // a set whose begin we missed: the seq gap asks for a snapshot
+        }
+        let next = &mut self.roads[1 - self.live];
+        let mut at = 1;
+        while at + 2 <= b.len() {
+            let (n, major) = (b[at] as usize, b[at + 1] == 1);
+            if !(2..=ROAD_LINE_MAX).contains(&n) || at + 2 + 4 * n > b.len() {
+                self.roads_id = None; // malformed: drop the set
+                return Some(false);
+            }
+            // a set bigger than the watch holds keeps what fits, the nearest streets
+            if next.n_lines < ROADS_LINES && next.n_pts + n <= ROADS_PTS {
+                next.lines[next.n_lines] = RoadLine { first: next.n_pts as u16, n: n as u16, major };
+                for i in 0..n {
+                    let p = at + 2 + 4 * i;
+                    next.pts[next.n_pts + i] = [i16_at(b, p), i16_at(b, p + 2)];
+                }
+                next.n_lines += 1;
+                next.n_pts += n;
+            }
+            self.roads_seen += 1;
+            at += 2 + 4 * n;
+        }
+        Some(false)
+    }
+
+    fn on_roads_end(&mut self, b: &[u8]) -> Option<bool> {
+        if b.len() < 5 || self.roads_id != Some(b[0]) {
+            return Some(false);
+        }
+        self.roads_id = None;
+        // a set cut to what fits is still shown; a short one (a lost message) is not
+        if u16_at(b, 1) as usize != self.roads_seen || self.route_len == 0 {
+            return Some(false);
+        }
+        self.live = 1 - self.live;
         Some(true)
     }
 }
@@ -339,12 +512,21 @@ pub mod enc {
     }
 
     /// Begin, chunks and end for a line of points in metres; returns the messages and the next seq.
-    pub fn route(mut seq: u8, id: u8, pts: &[[i32; 2]]) -> (Vec<Vec<u8>>, u8) {
+    pub fn route(seq: u8, id: u8, pts: &[[i32; 2]]) -> (Vec<Vec<u8>>, u8) {
+        route_in(seq, id, pts, None)
+    }
+
+    /// [route] tagged with the frame it is in.
+    pub fn route_in(mut seq: u8, id: u8, pts: &[[i32; 2]], frame: Option<u16>) -> (Vec<Vec<u8>>, u8) {
         let max = pts.iter().flat_map(|p| p.iter()).map(|v| v.abs()).max().unwrap_or(0);
         let scale = (max / i16::MAX as i32 + 1) as u8;
         let mut out = Vec::new();
         let n = (pts.len() as u16).to_le_bytes();
-        out.push(msg(b'B', seq, &[id, n[0], n[1], scale]));
+        let mut b = vec![id, n[0], n[1], scale];
+        if let Some(f) = frame {
+            b.extend(f.to_le_bytes());
+        }
+        out.push(msg(b'B', seq, &b));
         seq = seq.wrapping_add(1);
         for (c, chunk) in pts.chunks(CHUNK_MAX).enumerate() {
             let start = ((c * CHUNK_MAX) as u16).to_le_bytes();
@@ -357,6 +539,30 @@ pub mod enc {
             seq = seq.wrapping_add(1);
         }
         out.push(msg(b'E', seq, &[id, n[0], n[1]]));
+        (out, seq.wrapping_add(1))
+    }
+
+    /// A street set around `origin`: begin, one message of whole lines each, end.
+    pub fn roads(mut seq: u8, id: u8, origin: [i32; 2], lines: &[(bool, Vec<[i32; 2]>)]) -> (Vec<Vec<u8>>, u8) {
+        let mut out = Vec::new();
+        let mut b = vec![id];
+        b.extend(origin[0].to_le_bytes());
+        b.extend(origin[1].to_le_bytes());
+        out.push(msg(b'G', seq, &b));
+        seq = seq.wrapping_add(1);
+        let mut pts = 0u16;
+        for (major, l) in lines {
+            let mut b = vec![id, l.len() as u8, *major as u8];
+            for p in l {
+                b.extend(((p[0] - origin[0]) as i16).to_le_bytes());
+                b.extend(((p[1] - origin[1]) as i16).to_le_bytes());
+            }
+            pts += l.len() as u16;
+            out.push(msg(b'H', seq, &b));
+            seq = seq.wrapping_add(1);
+        }
+        let (n, p) = ((lines.len() as u16).to_le_bytes(), pts.to_le_bytes());
+        out.push(msg(b'J', seq, &[id, n[0], n[1], p[0], p[1]]));
         (out, seq.wrapping_add(1))
     }
 }
@@ -396,6 +602,80 @@ mod tests {
         assert!(m.has_state);
     }
 
+    fn drive_with_route(m: &mut Model) -> u8 {
+        let pts: Vec<[i32; 2]> = (0..10).map(|i| [0, i * 50]).collect();
+        let (msgs, seq) = route(0, 1, &pts);
+        msgs.iter().for_each(|x| {
+            m.apply(x);
+        });
+        m.apply(&state(seq, &active()));
+        seq.wrapping_add(1)
+    }
+
+    #[test]
+    fn streets_swap_in_whole_and_follow_the_route() {
+        let mut m = Box::new(Model::new());
+        let seq = drive_with_route(&mut m);
+        let lines = vec![(true, vec![[100, 100], [300, 100]]), (false, vec![[100, 0], [100, 400], [150, 450]])];
+        let (msgs, seq) = roads(seq, 7, [100, 200], &lines);
+        let (last, rest) = msgs.split_last().unwrap();
+        rest.iter().for_each(|x| {
+            assert_eq!(m.apply(x), Effect::Ignored);
+        });
+        assert_eq!(m.roads().n_lines, 0, "nothing shows until the end");
+        assert_eq!(m.apply(last), Effect::Changed);
+        let r = m.roads();
+        assert_eq!((r.n_lines, r.n_pts), (2, 5));
+        assert!(r.lines[0].major && !r.lines[1].major);
+        assert_eq!(r.line(&r.lines[1]).collect::<Vec<_>>(), vec![[100, 0], [100, 400], [150, 450]]);
+        // the next set arrives beside the shown one
+        let (msgs, seq) = roads(seq, 8, [0, 0], &lines[..1]);
+        m.apply(&msgs[0]);
+        assert_eq!(m.roads().n_lines, 2);
+        msgs[1..].iter().for_each(|x| {
+            m.apply(x);
+        });
+        assert_eq!(m.roads().n_lines, 1);
+        // the same route sent again in the same frame keeps them; a route in another frame drops them, once whole
+        let (msgs, seq) = route_in(seq, 2, &[[0, 0], [0, 10]], Some(5));
+        msgs.iter().for_each(|x| {
+            m.apply(x);
+        });
+        assert_eq!(m.roads().n_lines, 0, "the first route had no frame tag");
+        let (msgs, seq) = roads(seq, 9, [0, 0], &lines[..1]);
+        msgs.iter().for_each(|x| {
+            m.apply(x);
+        });
+        let (msgs, seq) = route_in(seq, 3, &[[0, 0], [0, 10]], Some(5));
+        msgs.iter().for_each(|x| {
+            m.apply(x);
+        });
+        assert_eq!(m.roads().n_lines, 1, "same frame");
+        let (msgs, _) = route_in(seq, 4, &[[0, 0], [0, 10]], Some(6));
+        m.apply(&msgs[0]);
+        assert_eq!(m.roads().n_lines, 1, "kept until the new line is whole");
+        msgs[1..].iter().for_each(|x| {
+            m.apply(x);
+        });
+        assert_eq!(m.roads().n_lines, 0, "another frame");
+    }
+
+    #[test]
+    fn a_short_street_set_is_dropped() {
+        let mut m = Box::new(Model::new());
+        let seq = drive_with_route(&mut m);
+        let lines = vec![(true, vec![[0, 0], [10, 0]]), (false, vec![[0, 0], [0, 10]])];
+        let (msgs, _) = roads(seq, 3, [0, 0], &lines);
+        m.apply(&msgs[0]);
+        m.apply(&msgs[1]);
+        // msgs[2] lost: the end's seq jumps, so the watch asks again, and the set is not shown
+        assert_eq!(m.apply(&msgs[3]), Effect::Resync);
+        assert_eq!(m.roads().n_lines, 0);
+        // garbage never panics
+        m.apply(&msg(b'H', 0, &[3, 31, 0]));
+        m.apply(&msg(b'G', 1, &[1]));
+    }
+
     #[test]
     fn route_is_shown_only_when_complete() {
         let mut m = Box::new(Model::new());
@@ -405,6 +685,8 @@ mod tests {
         for (i, msg) in msgs.iter().enumerate() {
             m.apply(msg);
             assert_eq!(m.route_len, if i + 1 == msgs.len() { 100 } else { 0 });
+            assert_eq!(m.apply(&state(0, &active())), Effect::Resync); // (seq aside) a state between keeps it
+            m.reset_seq();
         }
         // max |v| is 89100 m, so scale 3: points come back within 3 m
         for (a, b) in m.route[..100].iter().zip(&pts) {
@@ -417,11 +699,30 @@ mod tests {
         let mut m = Box::new(Model::new());
         let pts: std::vec::Vec<[i32; 2]> = (0..90).map(|i| [i, -i]).collect();
         let (msgs, _) = route(10, 1, &pts);
-        assert_eq!(m.apply(&msgs[0]), Effect::Changed);
+        assert_eq!(m.apply(&msgs[0]), Effect::Ignored);
         assert_eq!(m.apply(&msgs[1]), Effect::Ignored);
         assert_eq!(m.apply(&msgs[3]), Effect::Resync); // chunk 2 lost
         assert_eq!(m.apply(&msgs[4]), Effect::Resync);
         assert_eq!(m.route_len, 0);
+    }
+
+    #[test]
+    fn a_new_line_replaces_the_shown_one_only_when_whole() {
+        let mut m = Box::new(Model::new());
+        let a: Vec<[i32; 2]> = (0..40).map(|i| [0, i * 10]).collect();
+        let b: Vec<[i32; 2]> = (0..40).map(|i| [i * 10, 0]).collect();
+        let (msgs, seq) = route_in(0, 1, &a, Some(7));
+        msgs.iter().for_each(|x| {
+            m.apply(x);
+        });
+        assert_eq!((m.route_len, m.route[39]), (40, [0, 390]));
+        let (msgs, _) = route_in(seq, 2, &b, Some(7));
+        for (i, x) in msgs.iter().enumerate() {
+            m.apply(x);
+            // the old line shows while the new one arrives: never an empty map
+            let want = if i + 1 == msgs.len() { [390, 0] } else { [0, 390] };
+            assert_eq!((m.route_len, m.route[39]), (40, want));
+        }
     }
 
     #[test]
