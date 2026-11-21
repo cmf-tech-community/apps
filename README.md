@@ -15,6 +15,7 @@ An app runs on a watch with the patched firmware and the App Loader, both on the
 | [`vela-nav`](apps/vela-nav) | Turn-by-turn directions from the Vela maps app on an Android phone |
 | [`calendar`](apps/calendar) | A month with the phone's events as dots, a page next to the face and a widget card (needs FMC Companion) |
 | [`reminders`](apps/reminders) | The iPhone's open reminders: overdue, today, later; tick one off with a tap, and a widget card (needs FMC Companion on an iPhone) |
+| [`weather`](apps/weather) | Now, the next hours and the week ahead, in stock LVGL parts; a page next to the face and a widget card (needs FMC Companion) |
 | [`ha-remote`](apps/ha-remote) | Up to five Home Assistant light and group toggles with an Android companion |
 
 ## Make your own app

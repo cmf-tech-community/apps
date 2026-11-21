@@ -1,0 +1,16 @@
+[package]
+name = "weather"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+cmf-wp2-app.workspace = true
+companion-rpc.workspace = true
+
+[dev-dependencies]
+wp2-core.workspace = true
+
+[[bin]]
+name = "weather"
+bench = false

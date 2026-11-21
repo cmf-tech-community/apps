@@ -124,5 +124,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "weather"
+version = "0.1.0"
+dependencies = [
+ "cmf-wp2-app",
+ "companion-rpc",
+ "wp2-core",
+]
+
+[[package]]
 name = "wp2-core"
 version = "0.1.0"
