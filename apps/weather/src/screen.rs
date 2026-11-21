@@ -304,7 +304,7 @@ fn days_content(b: &mut Batch, flush: &mut Flush, page: Obj, m: &Model, wall: i3
         room(b, flush)?;
         let y = ROWS_Y + k as i32 * DAY_H;
         label(b, page, if today { "Today" } else { model::weekday(abs) }, 96, -112, y + 6, 1)?;
-        icon(b, page, model::icon(d.code), false, -42, y + 4, 40)?;
+        icon(b, page, model::icon(d.code), false, -34, y + 4, 40)?;
         let lo_l = label(b, page, model::temp_text(d.min as i16).as_str(), 56, 6, y + 12, 3)?;
         small(b, lo_l, GREY)?;
         room(b, flush)?;
